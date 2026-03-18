@@ -21,23 +21,21 @@
 
 ---
 
-## Supported Agents
+## Supported AI Tools
 
-| Agent | Format | Skills Directory |
-|-------|--------|-----------------|
-| Claude Code | SKILL.md | `~/.claude/skills` |
-| Cursor | SKILL.md | `~/.cursor/skills` |
-| Codex | SKILL.md | `~/.codex/skills` |
-| Gemini CLI | gemini-extension | `~/.gemini/skills` |
-| GitHub Copilot CLI | SKILL.md | `~/.copilot/skills` |
-| Kiro | SKILL.md | `~/.kiro/skills` |
-| OpenCode | SKILL.md | `~/.opencode/skills` |
-| Antigravity | SKILL.md | `~/.antigravity/skills` |
-| CodeBuddy | SKILL.md | `~/.codebuddy/skills` |
-| OpenClaw | SKILL.md | `~/.openclaw/skills` |
-| Trae | SKILL.md | `~/.trae/skills` |
-| Windsurf | SKILL.md | `~/.codeium/windsurf/skills` |
-| Cline | SKILL.md | `~/.cline/skills` |
+- Claude Code
+- Cursor
+- Codex
+- Gemini CLI
+- GitHub Copilot CLI
+- Kiro
+- OpenCode
+- Antigravity
+- CodeBuddy
+- OpenClaw
+- Trae
+- Windsurf
+- Cline
 
 ## Features
 
@@ -87,10 +85,12 @@ cd src-tauri && cargo test
 npm run tauri build
 ```
 
-Outputs:
+### Downloads
+
 - **macOS:** `AgentSkills.app` + `.dmg`
 - **Windows:** `.msi` + `.exe`
 - **Linux:** `.AppImage` + `.deb`
+- Release page: [GitHub Releases](https://github.com/anthropics/agent-skills/releases)
 
 ## Contributing
 
