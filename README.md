@@ -10,9 +10,6 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/chrlsio/agent-skills">
-      <img src="https://img.shields.io/badge/Version-0.1.1-blue?style=flat-square" alt="Version">
-    </a>
   <a href="https://github.com/chrlsio/agent-skills/releases"><img src="https://img.shields.io/github/v/release/chrlsio/agent-skills?style=flat-square" alt="Release"></a>
   <a href="https://github.com/chrlsio/agent-skills/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/chrlsio/agent-skills/stargazers"><img src="https://img.shields.io/github/stars/chrlsio/agent-skills?style=flat-square" alt="Stars"></a>
@@ -49,6 +46,17 @@
 - **Skill Editor** — Edit SKILL.md files directly in the app
 - **File Watcher** — Auto-refreshes when skills change on disk
 - **Cross-Agent Sync** — Install a skill to one agent, sync it to all others in one click
+
+## GUI Overview
+
+<p align="center">
+  <img src="docs/images/dashboard-light.png" width="48%" alt="AgentSkills dashboard view">
+  <img src="docs/images/skills-light.png" width="48%" alt="AgentSkills skills manager view">
+</p>
+<p align="center">
+  <img src="docs/images/marketplace-light.png" width="48%" alt="AgentSkills marketplace view">
+  <img src="docs/images/settings.png" width="48%" alt="AgentSkills settings view">
+</p>
 
 ## Tech Stack
 

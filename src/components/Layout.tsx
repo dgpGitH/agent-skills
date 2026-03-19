@@ -1,4 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { LayoutDashboard, Puzzle, Store, Settings } from "lucide-react";
 import { useResizable } from "@/hooks/useResizable";
 import ResizeHandle from "@/components/ResizeHandle";
@@ -11,6 +13,26 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const [appVersion, setAppVersion] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+    getVersion()
+      .then((version) => {
+        if (active) {
+          setAppVersion(version);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAppVersion("");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const sidebar = useResizable({
     initial: 200,
     min: 140,
@@ -56,7 +78,9 @@ export default function Layout() {
 
         {/* Footer */}
         <div className="border-t border-sidebar-border px-5 py-3">
-          <p className="text-xs text-muted-foreground">v0.1.0</p>
+          <p className="text-xs text-muted-foreground">
+            {appVersion ? `v${appVersion}` : "v--"}
+          </p>
         </div>
       </aside>
 

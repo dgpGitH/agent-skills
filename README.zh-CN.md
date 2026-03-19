@@ -47,6 +47,17 @@
 - **文件监听** — 磁盘上技能变化时自动刷新
 - **跨代理同步** — 一键将技能从一个代理同步到所有其他代理
 
+## 界面导览
+
+<p align="center">
+  <img src="docs/images/dashboard-light.png" width="48%" alt="AgentSkills 仪表盘视图">
+  <img src="docs/images/skills-light.png" width="48%" alt="AgentSkills 技能管理视图">
+</p>
+<p align="center">
+  <img src="docs/images/marketplace-light.png" width="48%" alt="AgentSkills 市场视图">
+  <img src="docs/images/settings.png" width="48%" alt="AgentSkills 设置视图">
+</p>
+
 ## 技术栈
 
 **前端：** React 19、TypeScript、Tailwind CSS 4、shadcn/ui
