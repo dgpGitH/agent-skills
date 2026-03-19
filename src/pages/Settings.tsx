@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Settings as SettingsIcon, Loader2, Trash2, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Settings as SettingsIcon, Loader2, Trash2, Check, Globe } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -12,7 +13,13 @@ interface AppSettings {
   path_overrides: Record<string, string[]> | null;
 }
 
+const LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "zh-CN", label: "中文" },
+];
+
 export default function SettingsPage() {
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const { data: agents } = useAllAgents();
   const [cacheCleared, setCacheCleared] = useState(false);
@@ -38,55 +45,84 @@ export default function SettingsPage() {
     }
   }
 
+  function handleLanguageChange(langCode: string) {
+    void i18n.changeLanguage(langCode);
+    saveMutation.mutate({
+      ...settings!,
+      language: langCode,
+    });
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading settings...
+        {t("settings.loadingSettings")}
       </div>
     );
   }
+
+  const currentLang = i18n.language;
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-2">
         <SettingsIcon className="size-5" />
-        <h1 className="text-lg font-semibold">Settings</h1>
+        <h1 className="text-lg font-semibold">{t("settings.title")}</h1>
       </div>
 
       {/* Theme */}
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">Theme</h2>
+        <h2 className="text-sm font-medium">{t("settings.theme")}</h2>
         <div className="flex gap-1.5">
-          {(["light", "dark", "system"] as const).map((t) => {
+          {(["light", "dark", "system"] as const).map((themeOption) => {
             const current = settings?.theme ?? "system";
             const isActive =
-              current === t || (t === "system" && !settings?.theme);
+              current === themeOption || (themeOption === "system" && !settings?.theme);
             return (
               <Button
-                key={t}
+                key={themeOption}
                 variant={isActive ? "default" : "outline"}
                 size="sm"
                 onClick={() =>
                   saveMutation.mutate({
                     ...settings!,
-                    theme: t === "system" ? null : t,
+                    theme: themeOption === "system" ? null : themeOption,
                   })
                 }
               >
-                {t}
+                {t(`settings.${themeOption}`)}
               </Button>
             );
           })}
         </div>
       </section>
 
+      {/* Language */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium flex items-center gap-1.5">
+          <Globe className="size-4" />
+          {t("settings.language")}
+        </h2>
+        <div className="flex gap-1.5">
+          {LANGUAGES.map((lang) => (
+            <Button
+              key={lang.code}
+              variant={currentLang === lang.code ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleLanguageChange(lang.code)}
+            >
+              {lang.label}
+            </Button>
+          ))}
+        </div>
+      </section>
+
       {/* Cache */}
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">Marketplace Cache</h2>
+        <h2 className="text-sm font-medium">{t("settings.marketplaceCache")}</h2>
         <p className="text-xs text-muted-foreground">
-          Marketplace results are cached locally for 5 minutes. Clear the cache
-          to force a fresh fetch.
+          {t("settings.cacheDescription")}
         </p>
         <Button
           variant="outline"
@@ -97,12 +133,12 @@ export default function SettingsPage() {
           {cacheCleared ? (
             <>
               <Check className="size-3.5" />
-              Cleared
+              {t("settings.cleared")}
             </>
           ) : (
             <>
               <Trash2 className="size-3.5" />
-              Clear Cache
+              {t("settings.clearCache")}
             </>
           )}
         </Button>
@@ -110,9 +146,9 @@ export default function SettingsPage() {
 
       {/* Agent paths */}
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">Agent Skill Paths</h2>
+        <h2 className="text-sm font-medium">{t("settings.agentSkillPaths")}</h2>
         <p className="text-xs text-muted-foreground">
-          Default skill directories for each agent.
+          {t("settings.agentPathsDescription")}
         </p>
         <div className="space-y-1">
           {agents?.map((agent) => (
@@ -127,7 +163,7 @@ export default function SettingsPage() {
                     <button
                       key={p}
                       className="text-muted-foreground hover:text-primary font-mono text-left break-all transition-colors cursor-pointer"
-                      title="Reveal in Finder"
+                      title={t("settings.revealInFinder")}
                       onClick={() => revealItemInDir(p)}
                     >
                       {p}

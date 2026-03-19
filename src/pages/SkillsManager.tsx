@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useTransition, useDeferredValue, memo, Fragment } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   Puzzle,
   Trash2,
@@ -22,6 +23,7 @@ import SearchInput from "@/components/SearchInput";
 import MarkdownContent from "@/components/MarkdownContent";
 
 export default function SkillsManager() {
+  const { t } = useTranslation();
   const { data: skills, isLoading } = useSkills();
   const { data: agents } = useAgents();
   const queryClient = useQueryClient();
@@ -158,7 +160,7 @@ export default function SkillsManager() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Puzzle className="size-4" />
-            <h1 className="text-sm font-semibold">Skills</h1>
+            <h1 className="text-sm font-semibold">{t("skills.title")}</h1>
             {skills && (
               <span className="text-sm text-muted-foreground">
                 ({filtered?.length})
@@ -174,7 +176,7 @@ export default function SkillsManager() {
             size="sm"
             onClick={() => changeFilter("all")}
           >
-            All
+            {t("skills.filterAll")}
           </Button>
           {detectedAgents.map((agent) => (
             <Button
@@ -192,15 +194,15 @@ export default function SkillsManager() {
         <SearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Filter skills..."
+          placeholder={t("skills.filterPlaceholder")}
           debounce={0}
         />
 
         {/* Skill list */}
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Scanning skills...</p>
+          <p className="text-sm text-muted-foreground">{t("skills.scanningSkills")}</p>
         ) : !filtered?.length ? (
-          <p className="text-sm text-muted-foreground">No skills found.</p>
+          <p className="text-sm text-muted-foreground">{t("skills.noSkillsFound")}</p>
         ) : (
           <div
             className="space-y-1 transition-opacity"
@@ -288,16 +290,16 @@ const SkillListItem = memo(function SkillListItem({
   );
 });
 
-function getSourceLabel(source: unknown): string {
-  if (!source) return "Unknown";
-  if (typeof source === "string") return source === "Unknown" ? "Unknown" : source;
-  if (typeof source !== "object") return "Unknown";
+function getSourceLabel(source: unknown, t: (key: string) => string): string {
+  if (!source) return t("skills.sourceUnknown");
+  if (typeof source === "string") return source === "Unknown" ? t("skills.sourceUnknown") : source;
+  if (typeof source !== "object") return t("skills.sourceUnknown");
   const src = source as Record<string, unknown>;
-  if ("LocalPath" in src) return "Local";
-  if ("GitRepository" in src) return "Git";
-  if ("SkillsSh" in src) return "skills.sh";
-  if ("ClawHub" in src) return "ClawHub";
-  return "Unknown";
+  if ("LocalPath" in src) return t("skills.sourceLocalPath");
+  if ("GitRepository" in src) return t("skills.sourceGit");
+  if ("SkillsSh" in src) return t("skills.sourceSkillsSh");
+  if ("ClawHub" in src) return t("skills.sourceClawHub");
+  return t("skills.sourceUnknown");
 }
 
 function getSourceRepo(source: unknown): string | null {
@@ -335,10 +337,11 @@ function SkillDetail({
   onSync: (skillPath: string, targetAgents: string[]) => void;
   onUninstall: (skillPath: string, agentSlug: string) => void;
 }) {
+  const { t } = useTranslation();
   const syncTargets = detectedAgents.filter(
     (a) => !installedAgents(skill).includes(a.slug)
   );
-  const sourceLabel = getSourceLabel(skill.source);
+  const sourceLabel = getSourceLabel(skill.source, t);
   const sourceRepo = getSourceRepo(skill.source);
   const metadata = skill.metadata as Record<string, unknown> | null;
 
@@ -366,7 +369,7 @@ function SkillDetail({
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Info className="size-4 shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-medium truncate">Detail</h3>
+          <h3 className="text-sm font-medium truncate">{t("skills.detail")}</h3>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={onClose}>
           <X className="size-4" />
@@ -387,7 +390,7 @@ function SkillDetail({
           )}
           <button
             className="text-xs text-muted-foreground/60 hover:text-primary font-mono mt-1.5 break-all text-left transition-colors cursor-pointer"
-            title="Reveal in Finder"
+            title={t("skills.revealInFinder")}
             onClick={() => revealItemInDir(skill.canonical_path)}
           >
             {skill.canonical_path}
@@ -397,29 +400,29 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Package Info — grid layout */}
-        <DetailSection label="Package Info">
+        <DetailSection label={t("skills.packageInfo")}>
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-baseline">
-            <span className="text-xs text-muted-foreground">Source</span>
+            <span className="text-xs text-muted-foreground">{t("skills.sourceLabel")}</span>
             <span className="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium w-fit">
               {sourceLabel}
             </span>
             {sourceRepo && (
               <>
-                <span className="text-xs text-muted-foreground">Repository</span>
+                <span className="text-xs text-muted-foreground">{t("skills.repository")}</span>
                 <p className="text-xs font-mono break-all">{sourceRepo}</p>
               </>
             )}
-            <span className="text-xs text-muted-foreground">ID</span>
+            <span className="text-xs text-muted-foreground">{t("skills.id")}</span>
             <p className="text-xs font-mono break-all">{skill.id}</p>
-            <span className="text-xs text-muted-foreground">Scope</span>
+            <span className="text-xs text-muted-foreground">{t("skills.scope")}</span>
             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium w-fit ${
               skill.scope.type === "SharedGlobal"
                 ? "bg-blue-500/15 text-blue-600"
                 : "bg-muted text-muted-foreground"
             }`}>
               {skill.scope.type === "SharedGlobal"
-                ? "Global"
-                : `${detectedAgents.find((a) => a.slug === (skill.scope as { agent: string }).agent)?.name ?? "Local"} Local`}
+                ? t("skills.scopeGlobal")
+                : t("skills.scopeLocal", { name: detectedAgents.find((a) => a.slug === (skill.scope as { agent: string }).agent)?.name ?? "Local" })}
             </span>
           </div>
         </DetailSection>
@@ -428,7 +431,7 @@ function SkillDetail({
         {metadata && Object.keys(metadata).length > 0 && (
           <>
             <hr className="border-border" />
-            <DetailSection label="Skill Metadata">
+            <DetailSection label={t("skills.skillMetadata")}>
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-baseline">
                 {Object.entries(metadata).map(([key, value]) => (
                   <Fragment key={key}>
@@ -450,7 +453,7 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Agent Assignment */}
-        <DetailSection label={`Agents (${installedAgents(skill).length}/${detectedAgents.length})`}>
+        <DetailSection label={t("skills.agentsLabel", { installed: installedAgents(skill).length, total: detectedAgents.length })}>
           <div className="space-y-1.5">
             {detectedAgents.map((agent) => {
               const inst = skill.installations.find(
@@ -495,19 +498,19 @@ function SkillDetail({
                       </span>
                       {inherited && inheritedInst?.inherited_from && (
                         <span className="text-[10px] text-muted-foreground/60 shrink-0">
-                          via {detectedAgents.find((a) => a.slug === inheritedInst.inherited_from)?.name ?? inheritedInst.inherited_from}
+                          {t("skills.via", { name: detectedAgents.find((a) => a.slug === inheritedInst.inherited_from)?.name ?? inheritedInst.inherited_from })}
                         </span>
                       )}
                       {inst?.is_symlink && (
                         <span className="text-[10px] text-muted-foreground/50 shrink-0">
-                          symlink
+                          {t("skills.symlink")}
                         </span>
                       )}
                     </div>
                     {installed ? (
                       <button
                         className="text-destructive/60 hover:text-destructive transition-colors disabled:opacity-50 shrink-0"
-                        title={`Uninstall from ${agent.name}`}
+                        title={`${t("skills.uninstall")} ${agent.name}`}
                         disabled={busy === skill.canonical_path + agent.slug}
                         onClick={() => onUninstall(skill.canonical_path, agent.slug)}
                       >
@@ -518,21 +521,21 @@ function SkillDetail({
                         variant="outline"
                         size="xs"
                         className="shrink-0 h-5 px-2 text-[10px]"
-                        title={`Sync to ${agent.name}`}
+                        title={`${t("skills.install")} ${agent.name}`}
                         disabled={busy === skill.canonical_path + agent.slug}
                         onClick={() =>
                           onSync(skill.canonical_path, [agent.slug])
                         }
                       >
                         <Copy className="size-2.5" />
-                        Install
+                        {t("skills.install")}
                       </Button>
                     ) : null}
                   </div>
                   {installation?.path && (
                     <button
                       className="text-[10px] text-muted-foreground/70 hover:text-primary font-mono mt-1 pl-[18px] break-all text-left leading-relaxed transition-colors cursor-pointer"
-                      title="Reveal in Finder"
+                      title={t("skills.revealInFinder")}
                       onClick={() => revealItemInDir(installation.path)}
                     >
                       {installation.path}
@@ -547,7 +550,7 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Actions */}
-        <DetailSection label="Actions">
+        <DetailSection label={t("skills.actions")}>
           <div className="flex flex-col gap-2">
             <Button
               variant="outline"
@@ -556,7 +559,7 @@ function SkillDetail({
               onClick={onEdit}
             >
               <Pencil className="size-3.5" />
-              Edit SKILL.md
+              {t("skills.editSkillMd")}
             </Button>
             {syncTargets.length > 0 && (
               <Button
@@ -572,7 +575,7 @@ function SkillDetail({
                 }
               >
                 <Copy className="size-3.5" />
-                Sync to {syncTargets.map((a) => a.name).join(", ")}
+                {t("skills.syncTo", { names: syncTargets.map((a) => a.name).join(", ") })}
               </Button>
             )}
           </div>
@@ -581,17 +584,17 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Documentation — deferred so detail panel renders first */}
-        <DetailSection label="Skill Content">
+        <DetailSection label={t("skills.skillContent")}>
           {isStale || docLoading ? (
             <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
-              Loading...
+              {t("skills.loading")}
             </div>
           ) : docContent ? (
             <MarkdownContent content={docContent} />
           ) : (
             <p className="text-xs text-muted-foreground italic">
-              No content available
+              {t("skills.noContent")}
             </p>
           )}
         </DetailSection>
@@ -635,6 +638,7 @@ function SkillEditor({
   onClose: () => void;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const [content, setContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -652,10 +656,10 @@ function SkillEditor({
         setLoading(false);
       })
       .catch(() => {
-        setContent("# Failed to load SKILL.md");
+        setContent(t("skills.failedToLoad"));
         setLoading(false);
       });
-  }, [skill.canonical_path]);
+  }, [skill.canonical_path, t]);
 
   async function handleSave() {
     setSaving(true);
@@ -681,7 +685,7 @@ function SkillEditor({
             variant="ghost"
             size="icon-sm"
             onClick={onBack}
-            title="Back to detail"
+            title={t("skills.backToDetail")}
           >
             <ArrowLeft className="size-4" />
           </Button>
@@ -703,7 +707,7 @@ function SkillEditor({
               {saving ? (
                 <Loader2 className="size-3 animate-spin" />
               ) : (
-                "Save"
+                t("skills.save")
               )}
             </Button>
           )}
@@ -717,7 +721,7 @@ function SkillEditor({
       {loading ? (
         <div className="flex items-center justify-center flex-1 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin mr-2" />
-          Loading...
+          {t("skills.loading")}
         </div>
       ) : (
         <textarea

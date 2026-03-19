@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   LayoutDashboard,
   Puzzle,
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const {
     data: agents,
     isLoading: agentsLoading,
@@ -93,20 +95,20 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <LayoutDashboard className="size-5" />
-          <h1 className="text-lg font-semibold">Dashboard</h1>
+          <h1 className="text-lg font-semibold">{t("dashboard.title")}</h1>
         </div>
       </div>
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-4">
         <StatCard
-          label="Detected Agents"
+          label={t("dashboard.detectedAgents")}
           value={agentsLoading ? "..." : detectedAgents.length}
           total={agents?.length}
           icon={<MonitorCheck className="size-4 text-muted-foreground" />}
         />
         <StatCard
-          label="Installed Skills"
+          label={t("dashboard.installedSkills")}
           value={skillsLoading ? "..." : totalSkills}
           icon={<Puzzle className="size-4 text-muted-foreground" />}
         />
@@ -115,10 +117,10 @@ export default function Dashboard() {
       {/* Agent cards */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium text-muted-foreground">Agents</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">{t("dashboard.agents")}</h2>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {detectedAgents.length} of {agents?.length ?? 0} detected
+              {t("dashboard.detectedOf", { detected: detectedAgents.length, total: agents?.length ?? 0 })}
             </span>
             <Button
               variant="outline"
@@ -127,7 +129,7 @@ export default function Dashboard() {
               onClick={() => {
                 void Promise.all([refetchAgents(), refetchSkills()]);
               }}
-              title="Refresh agents and skills"
+              title={t("dashboard.refreshTitle")}
             >
               <RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} />
             </Button>
@@ -138,7 +140,7 @@ export default function Dashboard() {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-              placeholder="Search name / slug / path..."
+              placeholder={t("dashboard.searchPlaceholder")}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -149,25 +151,25 @@ export default function Dashboard() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as "all" | "detected" | "not-installed")}
             >
-              <option value="all">All</option>
-              <option value="detected">Detected</option>
-              <option value="not-installed">Not Installed</option>
+              <option value="all">{t("dashboard.filterAll")}</option>
+              <option value="detected">{t("dashboard.filterDetected")}</option>
+              <option value="not-installed">{t("dashboard.filterNotInstalled")}</option>
             </select>
             <select
               className="h-8 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as "name" | "skills")}
             >
-              <option value="name">Sort: Name</option>
-              <option value="skills">Sort: Skills</option>
+              <option value="name">{t("dashboard.sortName")}</option>
+              <option value="skills">{t("dashboard.sortSkills")}</option>
             </select>
           </div>
         </div>
         {agentsLoading ? (
-          <p className="text-sm text-muted-foreground">Loading agents...</p>
+          <p className="text-sm text-muted-foreground">{t("dashboard.loadingAgents")}</p>
         ) : filteredAgents.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-            No agents match current filters.
+            {t("dashboard.noAgentsMatch")}
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
@@ -199,17 +201,16 @@ export default function Dashboard() {
                       </span>
                       {agent.detected && (
                         <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
-                          Detected
+                          {t("dashboard.detected")}
                         </span>
                       )}
                     </div>
                     {agent.detected ? (
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {agentSkillCount} skill
-                        {agentSkillCount !== 1 ? "s" : ""} installed
+                        {t("dashboard.skillCount", { count: agentSkillCount })}
                       </p>
                     ) : (
-                      <p className="text-xs text-muted-foreground mt-0.5">Not installed</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t("dashboard.notInstalled")}</p>
                     )}
                   </div>
                   {agent.detected ? (
@@ -229,7 +230,7 @@ export default function Dashboard() {
                       className="mt-0.5 shrink-0"
                       onClick={() => setGuideAgent(agent.slug)}
                     >
-                      Installation Guide
+                      {t("dashboard.installationGuide")}
                     </Button>
                   )}
                 </div>
@@ -243,7 +244,7 @@ export default function Dashboard() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-muted-foreground">
-            Recent Skills
+            {t("dashboard.recentSkills")}
           </h2>
           {totalSkills > 0 && (
             <Button
@@ -251,18 +252,18 @@ export default function Dashboard() {
               size="xs"
               onClick={() => navigate("/skills")}
             >
-              View all
+              {t("dashboard.viewAll")}
               <ArrowRight className="size-3" />
             </Button>
           )}
         </div>
         {skillsLoading ? (
-          <p className="text-sm text-muted-foreground">Scanning...</p>
+          <p className="text-sm text-muted-foreground">{t("dashboard.scanning")}</p>
         ) : !skills?.length ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center">
             <Puzzle className="size-8 text-muted-foreground/40 mx-auto mb-2" />
             <p className="text-sm text-muted-foreground">
-              No skills installed yet.
+              {t("dashboard.noSkillsYet")}
             </p>
             <Button
               variant="outline"
@@ -270,7 +271,7 @@ export default function Dashboard() {
               className="mt-3"
               onClick={() => navigate("/marketplace")}
             >
-              Browse Marketplace
+              {t("dashboard.browseMarketplace")}
             </Button>
           </div>
         ) : (
@@ -356,8 +357,27 @@ function InstallGuideModal({
   } | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   if (!agent) return null;
   const installCommand = agent.install_command?.trim();
+
+  function formatInstallSourceLabel(label: string | null): string {
+    switch (label) {
+      case "official-docs":
+        return t("dashboard.sourceOfficialDocs");
+      case "official-help-center":
+        return t("dashboard.sourceOfficialHelpCenter");
+      case "official-readme":
+        return t("dashboard.sourceOfficialReadme");
+      case "official-marketplace":
+        return t("dashboard.sourceOfficialMarketplace");
+      case "homebrew-cask":
+        return t("dashboard.sourceHomebrewCask");
+      default:
+        return t("dashboard.sourceUnspecified");
+    }
+  }
+
   const installSourceLabel = formatInstallSourceLabel(agent.install_source_label);
   const verifyCommand = agent.cli_command
     ? `${agent.cli_command} --version`
@@ -369,27 +389,27 @@ function InstallGuideModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg rounded-lg border border-border bg-card p-4 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{agent.name} installation guide</h3>
+          <h3 className="text-sm font-semibold">{t("dashboard.installGuideTitle", { name: agent.name })}</h3>
           <Button variant="ghost" size="icon-sm" onClick={onClose}>
             <X className="size-4" />
           </Button>
         </div>
         <div className="space-y-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-foreground">Source</span>
+            <span className="font-medium text-foreground">{t("dashboard.source")}</span>
             <span className="rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
               {installSourceLabel}
             </span>
           </div>
-          <p>Use the commands below to diagnose installation and PATH status quickly.</p>
+          <p>{t("dashboard.diagnoseTip")}</p>
           {verifyCommand ? (
-            <CommandBlock label="Version check" command={verifyCommand} />
+            <CommandBlock label={t("dashboard.versionCheck")} command={verifyCommand} />
           ) : null}
           {lookupCommand ? (
-            <CommandBlock label="PATH lookup" command={lookupCommand} />
+            <CommandBlock label={t("dashboard.pathLookup")} command={lookupCommand} />
           ) : null}
           {installCommand ? (
-            <CommandBlock label="Install command" command={installCommand} />
+            <CommandBlock label={t("dashboard.installCommand")} command={installCommand} />
           ) : null}
           {agent.install_docs_url?.trim() ? (
             <Button
@@ -398,11 +418,11 @@ function InstallGuideModal({
               className="w-full"
               onClick={() => openUrl(agent.install_docs_url!)}
             >
-              Open official install docs
+              {t("dashboard.openDocs")}
             </Button>
           ) : null}
           <div>
-            <p className="mb-1 font-medium text-foreground">Expected skill paths</p>
+            <p className="mb-1 font-medium text-foreground">{t("dashboard.expectedPaths")}</p>
             <ul className="space-y-1">
               {agent.global_paths.map((path) => (
                 <li key={path} className="font-mono text-[11px]">
@@ -417,24 +437,6 @@ function InstallGuideModal({
   );
 }
 
-function formatInstallSourceLabel(label: string | null): string {
-  switch (label) {
-    case "official-docs":
-      return "Official Docs";
-    case "official-help-center":
-      return "Official Help Center";
-    case "official-readme":
-      return "Official README";
-    case "official-marketplace":
-      return "Official Marketplace";
-    case "homebrew-cask":
-      return "Homebrew Cask";
-    default:
-      return "Unspecified";
-  }
-}
-
-
 function CommandBlock({
   label,
   command,
@@ -442,6 +444,7 @@ function CommandBlock({
   label: string;
   command: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div>
       <p className="mb-1 font-medium text-foreground">{label}</p>
@@ -453,7 +456,7 @@ function CommandBlock({
           onClick={() => navigator.clipboard.writeText(command)}
         >
           <Copy className="size-3" />
-          Copy
+          {t("dashboard.copy")}
         </Button>
       </div>
     </div>

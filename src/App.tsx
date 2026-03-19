@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import SkillsManager from "./pages/SkillsManager";
@@ -11,7 +13,19 @@ import { useTheme } from "./hooks/useTheme";
 
 function AppInner() {
   const queryClient = useQueryClient();
+  const { i18n } = useTranslation();
   useTheme();
+
+  // 从后端恢复已保存的语言设置
+  useEffect(() => {
+    invoke<{ language: string | null }>("read_settings")
+      .then((settings) => {
+        if (settings.language && settings.language !== i18n.language) {
+          void i18n.changeLanguage(settings.language);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -47,3 +61,4 @@ export default function App() {
     </BrowserRouter>
   );
 }
+
