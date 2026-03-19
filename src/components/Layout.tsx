@@ -1,19 +1,21 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { LayoutDashboard, Puzzle, Store, Settings } from "lucide-react";
 import { useResizable } from "@/hooks/useResizable";
 import ResizeHandle from "@/components/ResizeHandle";
 
-const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/skills", icon: Puzzle, label: "Skills" },
-  { to: "/marketplace", icon: Store, label: "Marketplace" },
-  { to: "/settings", icon: Settings, label: "Settings" },
-];
-
 export default function Layout() {
+  const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState<string>("");
+
+  const navItems = [
+    { to: "/", icon: LayoutDashboard, label: t("sidebar.dashboard") },
+    { to: "/skills", icon: Puzzle, label: t("sidebar.skills") },
+    { to: "/marketplace", icon: Store, label: t("sidebar.marketplace") },
+    { to: "/settings", icon: Settings, label: t("sidebar.settings") },
+  ];
 
   useEffect(() => {
     let active = true;

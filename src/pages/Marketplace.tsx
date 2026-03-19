@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, memo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Store,
   Download,
@@ -36,19 +37,8 @@ const SOURCES = [
   { key: "clawhub", label: "ClawHub" },
 ];
 
-const SKILLSSH_SORTS = [
-  { key: "all-time", label: "All Time" },
-  { key: "trending", label: "Trending" },
-  { key: "hot", label: "Hot" },
-];
-
-const CLAWHUB_SORTS = [
-  { key: "default", label: "Default" },
-  { key: "downloads", label: "Downloads" },
-  { key: "stars", label: "Stars" },
-];
-
 export default function Marketplace() {
+  const { t } = useTranslation();
   const [source, setSource] = useState("skills.sh");
   const [skillsshSort, setSkillsshSort] = useState("all-time");
   const [clawhubSort, setClawhubSort] = useState("default");
@@ -66,6 +56,19 @@ export default function Marketplace() {
     max: 560,
     storageKey: "marketplace-list-width",
   });
+
+  // Sort options with translations
+  const SKILLSSH_SORTS = useMemo(() => [
+    { key: "all-time", label: t("marketplace.sortAllTime") },
+    { key: "trending", label: t("marketplace.sortTrending") },
+    { key: "hot", label: t("marketplace.sortHot") },
+  ], [t]);
+
+  const CLAWHUB_SORTS = useMemo(() => [
+    { key: "default", label: t("marketplace.sortDefault") },
+    { key: "downloads", label: t("marketplace.sortDownloads") },
+    { key: "stars", label: t("marketplace.sortStars") },
+  ], [t]);
 
   // SearchInput fires debounced changes; we store the query for React Query
   const handleSearchChange = useCallback((value: string) => {
@@ -190,7 +193,7 @@ export default function Marketplace() {
       >
         <div className="flex items-center gap-2">
           <Store className="size-4" />
-          <h1 className="text-sm font-semibold">Marketplace</h1>
+          <h1 className="text-sm font-semibold">{t("marketplace.title")}</h1>
         </div>
 
         {/* Source tabs */}
@@ -233,7 +236,7 @@ export default function Marketplace() {
         <SearchInput
           value={searchQuery}
           onChange={handleSearchChange}
-          placeholder={`Search ${source === "skills.sh" ? "skills.sh" : "ClawHub"}...`}
+          placeholder={t("marketplace.searchPlaceholder", { source: source === "skills.sh" ? "skills.sh" : "ClawHub" })}
           debounce={350}
         />
 
@@ -241,15 +244,15 @@ export default function Marketplace() {
         {isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
             <Loader2 className="size-4 animate-spin" />
-            Loading...
+            {t("marketplace.loading")}
           </div>
         ) : error ? (
           <p className="text-sm text-destructive py-4">
-            Failed to load: {String(error)}
+            {t("marketplace.failedToLoad", { error: String(error) })}
           </p>
         ) : !items?.length ? (
           <p className="text-sm text-muted-foreground py-4">
-            No skills found.
+            {t("marketplace.noSkillsFound")}
           </p>
         ) : (
           <div className="space-y-1">
@@ -354,6 +357,7 @@ function MarketplaceSkillDetail({
   onUninstall: (skillPath: string, agentSlug: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const anyInstalling = installingAgents.size > 0;
 
   // Find the matching local skill (if any agent has it installed)
@@ -400,7 +404,7 @@ function MarketplaceSkillDetail({
     <div className="flex-1 min-w-0 bg-card flex flex-col overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h3 className="text-sm font-medium truncate">Detail</h3>
+        <h3 className="text-sm font-medium truncate">{t("marketplace.detail")}</h3>
         <Button variant="ghost" size="icon-sm" onClick={onClose}>
           <X className="size-4" />
         </Button>
@@ -417,7 +421,7 @@ function MarketplaceSkillDetail({
             {hasAnyInstalled ? (
               <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-green-500/15 text-green-600 px-2.5 py-1 text-xs font-medium">
                 <Check className="size-3" />
-                {allInstalled ? "Installed" : `${localAgents.length}/${detectedAgents.length}`}
+                {allInstalled ? t("marketplace.installed") : `${localAgents.length}/${detectedAgents.length}`}
               </span>
             ) : (
               <Button
@@ -434,7 +438,7 @@ function MarketplaceSkillDetail({
                 ) : (
                   <Download className="size-3.5" />
                 )}
-                {anyInstalling ? "Installing..." : "Install All"}
+                {anyInstalling ? t("marketplace.installing") : t("marketplace.installAll")}
               </Button>
             )}
           </div>
@@ -451,7 +455,7 @@ function MarketplaceSkillDetail({
             </span>
             {skill.installs != null && (
               <span className="text-xs text-muted-foreground tabular-nums">
-                {formatInstalls(skill.installs)} installs
+                {formatInstalls(skill.installs)} {t("marketplace.installs").toLowerCase()}
               </span>
             )}
           </div>
@@ -463,7 +467,7 @@ function MarketplaceSkillDetail({
         {detectedAgents.length > 0 && (
           <>
             <InfoSection
-              label={`Agents (${localAgents.length}/${detectedAgents.length})`}
+              label={t("marketplace.agentsLabel", { installed: localAgents.length, total: detectedAgents.length })}
             >
               <div className="space-y-1.5">
                 {detectedAgents.map((agent) => {
@@ -509,7 +513,7 @@ function MarketplaceSkillDetail({
                         ) : installingAgents.has(agent.slug) ? (
                           <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                             <Loader2 className="size-2.5 animate-spin" />
-                            Installing...
+                            {t("marketplace.installing")}
                           </span>
                         ) : (
                           <Button
@@ -520,7 +524,7 @@ function MarketplaceSkillDetail({
                             onClick={() => onInstall([agent.slug])}
                           >
                             <Copy className="size-2.5" />
-                            Install
+                            {t("marketplace.install")}
                           </Button>
                         )}
                       </div>
@@ -551,10 +555,10 @@ function MarketplaceSkillDetail({
         <hr className="border-border" />
 
         {/* Package Info */}
-        <InfoSection label="Package Info">
+        <InfoSection label={t("marketplace.packageInfo")}>
           <InfoGrid>
             {skill.repository && (
-              <InfoRow label="Repository">
+              <InfoRow label={t("marketplace.repository")}>
                 <button
                   className="text-xs text-primary hover:underline font-mono break-all text-left inline-flex items-start gap-1 cursor-pointer"
                   onClick={() => openUrl(skill.repository!)}
@@ -565,7 +569,7 @@ function MarketplaceSkillDetail({
               </InfoRow>
             )}
             {skill.installs != null && (
-              <InfoRow label="Installs">
+              <InfoRow label={t("marketplace.installs")}>
                 <span className="text-xs font-medium tabular-nums">
                   {formatInstalls(skill.installs)}
                 </span>
@@ -580,7 +584,7 @@ function MarketplaceSkillDetail({
         <hr className="border-border" />
 
         {/* Quick Actions */}
-        <InfoSection label="Actions">
+        <InfoSection label={t("marketplace.actions")}>
           <div className="flex flex-col gap-2">
             {skill.repository && (
               <Button
@@ -590,7 +594,7 @@ function MarketplaceSkillDetail({
                 onClick={() => openUrl(skill.repository!)}
               >
                 <ExternalLink className="size-3.5" />
-                View Repository
+                {t("marketplace.viewRepository")}
               </Button>
             )}
             {skill.source === "skills.sh" && (
@@ -601,7 +605,7 @@ function MarketplaceSkillDetail({
                 onClick={() => openUrl("https://skills.sh")}
               >
                 <Tag className="size-3.5" />
-                View on skills.sh
+                {t("marketplace.viewOnSkillsSh")}
               </Button>
             )}
           </div>
@@ -610,19 +614,19 @@ function MarketplaceSkillDetail({
         <hr className="border-border" />
 
         {/* Skill Content from remote SKILL.md */}
-        <InfoSection label="Skill Content">
+        <InfoSection label={t("marketplace.skillContent")}>
           {isStale || contentLoading ? (
             <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
-              Loading...
+              {t("marketplace.loading")}
             </div>
           ) : remoteContent ? (
             <MarkdownContent content={remoteContent} />
           ) : (
             <p className="text-xs text-muted-foreground italic">
               {skill.repository
-                ? "Could not load content from repository"
-                : "No repository URL available"}
+                ? t("marketplace.couldNotLoad")
+                : t("marketplace.noRepoUrl")}
             </p>
           )}
         </InfoSection>
