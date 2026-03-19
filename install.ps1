@@ -2,7 +2,7 @@
 # Usage: irm https://raw.githubusercontent.com/chrlsio/agent-skills/main/install.ps1 | iex
 #
 # Optional variables (set before running):
-#   $Version = "0.1.0"   # Install specific version
+#   $Version = "0.1.1"   # Install specific version
 #   $DryRun = $true      # Preview commands without executing
 
 if (-not $Version) { $Version = "" }

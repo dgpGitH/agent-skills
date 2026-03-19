@@ -10,13 +10,17 @@
 </p>
 
 <p align="center">
+    <a href="https://github.com/chrlsio/agent-skills">
+      <img src="https://img.shields.io/badge/Version-0.1.1-blue?style=flat-square" alt="Version">
+    </a>
   <a href="https://github.com/chrlsio/agent-skills/releases"><img src="https://img.shields.io/github/v/release/chrlsio/agent-skills?style=flat-square" alt="Release"></a>
   <a href="https://github.com/chrlsio/agent-skills/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/chrlsio/agent-skills/stargazers"><img src="https://img.shields.io/github/stars/chrlsio/agent-skills?style=flat-square" alt="Stars"></a>
 </p>
 
 <p align="center">
-  <a href="./README.zh-CN.md">中文</a>
+  <a href="./README.zh-CN.md">简体中文</a> | 
+    <strong>English</strong>
 </p>
 
 ---
@@ -61,13 +65,13 @@ Automatically detects your OS, architecture, and picks a matching installer from
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.1/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.1/install.ps1 | iex
 ```
 
 Supported formats: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (`.exe` / `.msi`)

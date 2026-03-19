@@ -1,5 +1,5 @@
 cask "agentskills" do
-  version "0.1.0"
+  version "0.1.1"
   arch arm: "aarch64", intel: "x64"
   sha256 :no_check
 

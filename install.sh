@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/main/install.sh | bash
 #
 # Environment variables:
-#   VERSION     - Install a specific version (e.g. "0.1.0" or "v0.1.0"), default: latest
+#   VERSION     - Install a specific version (e.g. "0.1.1" or "v0.1.1"), default: latest
 #   DRY_RUN     - Set to "1" to print commands without executing
 
 set -euo pipefail
@@ -52,12 +52,12 @@ Usage:
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
 
 Environment variables:
-  VERSION   Install specific version tag (e.g. 0.1.0 or v0.1.0), default: latest
+  VERSION   Install specific version tag (e.g. 0.1.1 or v0.1.1), default: latest
   DRY_RUN   Set to 1 to print commands without executing
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=0.1.0 bash
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=0.1.1 bash
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | DRY_RUN=1 bash
 EOF
 }
