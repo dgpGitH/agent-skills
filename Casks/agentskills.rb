@@ -1,15 +1,9 @@
 cask "agentskills" do
   version "0.1.0"
-  sha256 arm:   "67a4155c45a94e0f8ff5bba9d138affceb092d5ebaabcb842391d0bd4cb4aaf2"
-  sha256 intel: "baecacb87ce5b615b6289b8b2771e11ba219903a116ba07c970ee99bcf1c54fa"
+  arch arm: "aarch64", intel: "x64"
+  sha256 :no_check
 
-  on_arm do
-    url "https://github.com/chrlsio/agent-skills/releases/download/v#{version}/AgentSkills_#{version}_aarch64.dmg"
-  end
-
-  on_intel do
-    url "https://github.com/chrlsio/agent-skills/releases/download/v#{version}/AgentSkills_#{version}_x64.dmg"
-  end
+  url "https://github.com/chrlsio/agent-skills/releases/download/v#{version}/AgentSkills_#{version}_#{arch}.dmg"
 
   name "AgentSkills"
   desc "Cross-platform desktop app for managing AI agent skills"
@@ -19,6 +13,16 @@ cask "agentskills" do
 
   zap trash: [
     "~/Library/Application Support/com.agentskills.app",
-    "~/Library/Preferences/com.agentskills.app.plist"
+    "~/Library/Caches/com.agentskills.app",
+    "~/Library/Preferences/com.agentskills.app.plist",
+    "~/Library/Saved Application State/com.agentskills.app.savedState"
   ]
+
+  caveats <<~EOS
+    If you encounter the "App is damaged" error, run:
+      sudo xattr -rd com.apple.quarantine "/Applications/AgentSkills.app"
+
+    Or install with:
+      brew install --cask --no-quarantine agentskills
+  EOS
 end
