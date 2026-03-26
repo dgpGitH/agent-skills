@@ -3,7 +3,10 @@ use std::path::Path;
 use reqwest::blocking::Client;
 
 use crate::installer::install::{install_skill_from_git, install_skill_from_path};
-use crate::installer::uninstall::uninstall_skill as uninstall_skill_impl;
+use crate::installer::uninstall::{
+    uninstall_skill as uninstall_skill_impl,
+    uninstall_skill_from_all as uninstall_skill_from_all_impl,
+};
 use crate::models::agent::AgentConfig;
 use crate::models::skill::{Skill, SkillSource};
 use crate::paths;
@@ -37,9 +40,8 @@ pub fn install_skill(source: SkillSource, target_agents: Vec<String>) -> Result<
     match source {
         SkillSource::LocalPath { path } => {
             let source_path = Path::new(&path);
-            for agent in target_agents {
-                install_skill_from_path(source_path, &agent, &agents).map_err(|e| e.to_string())?;
-            }
+            install_skill_from_path(source_path, &target_agents, &agents)
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
         SkillSource::GitRepository {
@@ -47,17 +49,14 @@ pub fn install_skill(source: SkillSource, target_agents: Vec<String>) -> Result<
             skill_path,
         } => {
             let relative = skill_path.unwrap_or_else(|| ".".to_string());
-            for agent in target_agents {
-                install_skill_from_git(&repo_url, &relative, &agent, &agents)
-                    .map_err(|e| e.to_string())?;
-            }
+            install_skill_from_git(&repo_url, &relative, &target_agents, &agents)
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
         SkillSource::SkillsSh { repository } | SkillSource::ClawHub { repository } => {
             let repo = repository.ok_or_else(|| "repository url is required".to_string())?;
-            for agent in target_agents {
-                install_skill_from_git(&repo, ".", &agent, &agents).map_err(|e| e.to_string())?;
-            }
+            install_skill_from_git(&repo, ".", &target_agents, &agents)
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
         SkillSource::Unknown => Err("unsupported skill source".to_string()),
@@ -67,17 +66,44 @@ pub fn install_skill(source: SkillSource, target_agents: Vec<String>) -> Result<
 #[tauri::command]
 pub fn uninstall_skill(skill_id: String, agent_slug: String) -> Result<(), String> {
     let agents = load_detected_agents()?;
-    uninstall_skill_impl(Path::new(&skill_id), &agent_slug, &agents).map_err(|e| e.to_string())
+    uninstall_skill_impl(&skill_id, &agent_slug, &agents).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn uninstall_skill_all(skill_id: String) -> Result<(), String> {
+    let agents = load_detected_agents()?;
+    uninstall_skill_from_all_impl(&skill_id, &agents).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn sync_skill(skill_id: String, target_agents: Vec<String>) -> Result<(), String> {
     let agents = load_detected_agents()?;
-    let source = Path::new(&skill_id);
-    for agent in target_agents {
-        install_skill_from_path(source, &agent, &agents).map_err(|e| e.to_string())?;
-    }
+    let source = resolve_skill_source(&skill_id, &agents)?;
+    install_skill_from_path(&source, &target_agents, &agents).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Find the actual source directory for a skill by id.
+/// Checks canonical location first, then falls back to agent directories.
+fn resolve_skill_source(
+    skill_id: &str,
+    agents: &[AgentConfig],
+) -> Result<std::path::PathBuf, String> {
+    // 1. Check canonical ~/.agents/skills/<id>/
+    let canonical = crate::installer::install::shared_skills_dir().join(skill_id);
+    if canonical.is_dir() {
+        return Ok(canonical);
+    }
+    // 2. Fall back: search agent directories
+    for agent in agents {
+        for root in &agent.global_paths {
+            let agent_skill = std::path::PathBuf::from(root).join(skill_id);
+            if agent_skill.is_dir() {
+                return Ok(agent_skill);
+            }
+        }
+    }
+    Err(format!("skill '{}' not found in any directory", skill_id))
 }
 
 #[tauri::command]
@@ -97,10 +123,8 @@ pub fn install_from_git(
     target_agents: Vec<String>,
 ) -> Result<(), String> {
     let agents = load_detected_agents()?;
-    for agent in target_agents {
-        install_skill_from_git(&repo_url, &skill_relative_path, &agent, &agents)
-            .map_err(|e| e.to_string())?;
-    }
+    install_skill_from_git(&repo_url, &skill_relative_path, &target_agents, &agents)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

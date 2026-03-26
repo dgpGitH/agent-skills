@@ -26,17 +26,24 @@ pub enum InstallError {
     Git(#[from] git2::Error),
 }
 
+/// Install a skill from a local path to one or more target agents.
+///
+/// Canonical model:
+/// 1. Copy skill files to `~/.agents/skills/<name>/` (canonical location)
+/// 2. For each target agent, create a symlink from agent's skills dir → canonical
+/// 3. If agent reads `~/.agents/skills/` via additional_readable_paths, skip symlink
+/// 4. Apply agent-specific hooks (Gemini extension, extra config)
 pub fn install_skill_from_path(
     source_skill_dir: &Path,
-    target_agent_slug: &str,
+    target_agent_slugs: &[String],
     agents: &[AgentConfig],
 ) -> Result<PathBuf, InstallError> {
-    install_skill_from_path_with_name(source_skill_dir, target_agent_slug, agents, None)
+    install_skill_from_path_with_name(source_skill_dir, target_agent_slugs, agents, None)
 }
 
 fn install_skill_from_path_with_name(
     source_skill_dir: &Path,
-    target_agent_slug: &str,
+    target_agent_slugs: &[String],
     agents: &[AgentConfig],
     target_skill_name: Option<&str>,
 ) -> Result<PathBuf, InstallError> {
@@ -45,16 +52,6 @@ fn install_skill_from_path_with_name(
             source_skill_dir.to_string_lossy().to_string(),
         ));
     }
-    let agent = agents
-        .iter()
-        .find(|a| a.slug == target_agent_slug)
-        .ok_or_else(|| InstallError::AgentNotFound(target_agent_slug.to_string()))?;
-    let target_root = agent
-        .global_paths
-        .first()
-        .map(PathBuf::from)
-        .ok_or_else(|| InstallError::MissingTargetPath(target_agent_slug.to_string()))?;
-    fs::create_dir_all(&target_root)?;
 
     let fallback = source_skill_dir
         .file_name()
@@ -64,35 +61,136 @@ fn install_skill_from_path_with_name(
         .map(sanitize_skill_dir_name)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| sanitize_skill_dir_name(fallback));
-    let target_skill_dir = target_root.join(&skill_name);
-    if target_skill_dir.exists() {
-        fs::remove_dir_all(&target_skill_dir)?;
-    }
-    copy_dir_recursive(source_skill_dir, &target_skill_dir)?;
 
-    if agent.skill_format == SkillFormat::GeminiExtension {
-        apply_gemini_install_hook(&target_skill_dir)?;
-    }
-    if let Some(extra_cfgs) = &agent.extra_config {
-        for cfg in extra_cfgs {
-            if let (Some(template), Some(target_file)) = (&cfg.template, &cfg.target_file) {
-                render_extra_config(template, target_file, target_agent_slug, &skill_name)?;
+    // Step 1: Install to canonical location ~/.agents/skills/<name>/
+    let canonical_dir = install_to_canonical(source_skill_dir, &skill_name)?;
+
+    // Step 2: For each target agent, create symlink or apply hooks
+    for slug in target_agent_slugs {
+        let agent = agents
+            .iter()
+            .find(|a| a.slug == *slug)
+            .ok_or_else(|| InstallError::AgentNotFound(slug.to_string()))?;
+
+        // Check if agent reads ~/.agents/skills/ via additional_readable_paths
+        let reads_shared = agent.additional_readable_paths.iter().any(|rp| {
+            let rp_path = PathBuf::from(&rp.path);
+            rp_path == shared_skills_dir()
+        });
+
+        if reads_shared {
+            // Agent reads shared dir directly — no symlink needed
+            // But still apply format-specific hooks
+            if agent.skill_format == SkillFormat::GeminiExtension {
+                apply_gemini_install_hook(&canonical_dir)?;
+            }
+        } else {
+            // Agent needs a symlink from its own dir → canonical
+            let agent_root = agent
+                .global_paths
+                .first()
+                .map(PathBuf::from)
+                .ok_or_else(|| InstallError::MissingTargetPath(slug.to_string()))?;
+            fs::create_dir_all(&agent_root)?;
+            let agent_skill_link = agent_root.join(&skill_name);
+
+            // Remove existing entry (symlink, dir, or file)
+            if agent_skill_link.symlink_metadata().is_ok() {
+                if agent_skill_link.is_dir() && !is_symlink(&agent_skill_link) {
+                    fs::remove_dir_all(&agent_skill_link)?;
+                } else {
+                    // symlink or file
+                    fs::remove_file(&agent_skill_link)?;
+                }
+            }
+
+            link_or_copy(&canonical_dir, &agent_skill_link)?;
+
+            if agent.skill_format == SkillFormat::GeminiExtension {
+                apply_gemini_install_hook(&canonical_dir)?;
+            }
+        }
+
+        if let Some(extra_cfgs) = &agent.extra_config {
+            for cfg in extra_cfgs {
+                if let (Some(template), Some(target_file)) = (&cfg.template, &cfg.target_file) {
+                    render_extra_config(template, target_file, slug, &skill_name)?;
+                }
             }
         }
     }
 
+    Ok(canonical_dir)
+}
+
+/// Copy skill files to the canonical location `~/.agents/skills/<name>/`.
+/// If source is already the canonical location, skip the copy.
+fn install_to_canonical(
+    source_skill_dir: &Path,
+    skill_name: &str,
+) -> Result<PathBuf, InstallError> {
+    let target_root = shared_skills_dir();
+    fs::create_dir_all(&target_root)?;
+    let target_skill_dir = target_root.join(skill_name);
+
+    // Skip copy if source is already the canonical location
+    let source_canonical = fs::canonicalize(source_skill_dir).unwrap_or(source_skill_dir.to_path_buf());
+    let target_canonical = fs::canonicalize(&target_skill_dir).unwrap_or(target_skill_dir.clone());
+    if source_canonical == target_canonical {
+        return Ok(target_skill_dir);
+    }
+
+    if target_skill_dir.exists() {
+        fs::remove_dir_all(&target_skill_dir)?;
+    }
+    copy_dir_recursive(source_skill_dir, &target_skill_dir)?;
     Ok(target_skill_dir)
+}
+
+/// Link an agent's skill directory to the canonical location.
+/// Tries symlink first; falls back to copy if symlink fails
+/// (e.g. Windows without developer mode / elevated privileges).
+fn link_or_copy(original: &Path, link: &Path) -> Result<(), InstallError> {
+    let symlink_result = create_symlink(original, link);
+    if symlink_result.is_ok() {
+        return Ok(());
+    }
+    // Fallback: copy the directory instead
+    eprintln!(
+        "symlink failed, falling back to copy: {} -> {}",
+        original.display(),
+        link.display()
+    );
+    copy_dir_recursive(original, link)?;
+    Ok(())
+}
+
+fn create_symlink(original: &Path, link: &Path) -> Result<(), InstallError> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(original, link)?;
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(original, link)?;
+    }
+    Ok(())
+}
+
+fn is_symlink(path: &Path) -> bool {
+    path.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 pub fn install_skill_from_git(
     repo_url: &str,
     skill_relative_path: &str,
-    target_agent_slug: &str,
+    target_agent_slugs: &[String],
     agents: &[AgentConfig],
 ) -> Result<PathBuf, InstallError> {
     let temp_dir = std::env::temp_dir().join(format!(
-        "skills-app-install-{}-{}",
-        target_agent_slug,
+        "skills-app-install-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock drift")
@@ -102,7 +200,7 @@ pub fn install_skill_from_git(
     let source = temp_dir.join(skill_relative_path);
     let skill_name = derive_git_target_skill_name(repo_url, skill_relative_path, &source);
     let installed =
-        install_skill_from_path_with_name(&source, target_agent_slug, agents, Some(&skill_name))?;
+        install_skill_from_path_with_name(&source, target_agent_slugs, agents, Some(&skill_name))?;
     let _ = fs::remove_dir_all(temp_dir);
     Ok(installed)
 }
@@ -226,6 +324,13 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), std::io::Error
     Ok(())
 }
 
+// The cross-agent shared skills directory per the Agent Skills specification.
+const SHARED_SKILLS_PATH: &str = "~/.agents/skills";
+
+pub fn shared_skills_dir() -> PathBuf {
+    expand_home_path(SHARED_SKILLS_PATH)
+}
+
 fn expand_home_path(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
@@ -238,7 +343,7 @@ fn expand_home_path(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::agent::AgentConfig;
+    use crate::models::agent::{AgentConfig, ReadablePath};
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -253,23 +358,62 @@ mod tests {
     }
 
     #[test]
-    fn install_from_path_copies_skill_files() {
+    fn install_copies_to_canonical_and_creates_symlink() {
         let src = test_dir("src");
         let src_skill = src.join("demo");
         fs::create_dir_all(src_skill.join("scripts")).expect("create scripts");
         fs::write(src_skill.join("SKILL.md"), "# demo").expect("write skill");
         fs::write(src_skill.join("scripts/run.sh"), "echo hi").expect("write script");
 
-        let out = test_dir("out");
+        let agent_dir = test_dir("agent-out");
+        let agent = AgentConfig {
+            slug: "claude-code".into(),
+            name: "Claude Code".into(),
+            global_paths: vec![agent_dir.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let slugs = vec!["claude-code".to_string()];
+        let canonical = install_skill_from_path(&src_skill, &slugs, &[agent]).expect("install");
+
+        // Canonical dir should have the files
+        assert!(canonical.join("SKILL.md").is_file());
+        assert!(canonical.join("scripts/run.sh").is_file());
+
+        // Agent dir should have a symlink
+        let agent_link = agent_dir.join("demo");
+        assert!(agent_link.exists());
+        assert!(is_symlink(&agent_link));
+    }
+
+    #[test]
+    fn install_skips_symlink_when_agent_reads_shared() {
+        let src = test_dir("src-shared");
+        let src_skill = src.join("shared-skill");
+        fs::create_dir_all(&src_skill).expect("create skill dir");
+        fs::write(src_skill.join("SKILL.md"), "# shared").expect("write skill");
+
+        let shared_dir = shared_skills_dir();
         let agent = AgentConfig {
             slug: "codex".into(),
             name: "Codex".into(),
-            global_paths: vec![out.to_string_lossy().to_string()],
+            global_paths: vec![test_dir("codex-skills").to_string_lossy().to_string()],
+            additional_readable_paths: vec![ReadablePath {
+                path: shared_dir.to_string_lossy().to_string(),
+                source_agent: "shared".to_string(),
+            }],
             ..Default::default()
         };
-        let target = install_skill_from_path(&src_skill, "codex", &[agent]).expect("install");
-        assert!(target.join("SKILL.md").is_file());
-        assert!(target.join("scripts/run.sh").is_file());
+        let slugs = vec!["codex".to_string()];
+        let canonical = install_skill_from_path(&src_skill, &slugs, &[agent.clone()])
+            .expect("install");
+
+        // Canonical dir should have the files
+        assert!(canonical.join("SKILL.md").is_file());
+
+        // Agent dir should NOT have a symlink (agent reads shared directly)
+        let agent_root = PathBuf::from(&agent.global_paths[0]);
+        let agent_link = agent_root.join("shared-skill");
+        assert!(!agent_link.exists());
     }
 
     #[test]
@@ -291,7 +435,8 @@ mod tests {
             skill_format: SkillFormat::GeminiExtension,
             ..Default::default()
         };
-        let target = install_skill_from_path(&src_skill, "gemini-cli", &[agent]).expect("install");
+        let slugs = vec!["gemini-cli".to_string()];
+        let target = install_skill_from_path(&src_skill, &slugs, &[agent]).expect("install");
         assert!(target.join("GEMINI.md").is_file());
         assert!(target.join("gemini-extension.json").is_file());
     }

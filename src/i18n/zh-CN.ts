@@ -87,6 +87,7 @@ const zhCN = {
     via: "来自 {{name}}",
     symlink: "符号链接",
     install: "安装",
+    sync: "同步",
     uninstall: "卸载",
     // Actions
     actions: "操作",
@@ -140,6 +141,7 @@ const zhCN = {
     sortDownloads: "下载量",
     sortStars: "星标",
     revealInFinder: "在 Finder 中显示",
+    sync: "同步",
     installFailed: "无法安装技能。",
     uninstallFailed: "无法卸载技能。",
   },

@@ -140,7 +140,7 @@ export default function Marketplace() {
       if (localSkill) {
         // Fast path: copy from local installation (no git clone needed)
         await invoke("sync_skill", {
-          skillId: localSkill.canonical_path,
+          skillId: localSkill.id,
           targetAgents,
         });
       } else {
@@ -168,10 +168,10 @@ export default function Marketplace() {
     }
   }
 
-  async function handleUninstall(skillPath: string, agentSlug: string) {
+  async function handleUninstall(skillId: string, agentSlug: string) {
     setInstallingAgents((prev) => new Set(prev).add(agentSlug));
     try {
-      await invoke("uninstall_skill", { skillId: skillPath, agentSlug });
+      await invoke("uninstall_skill", { skillId, agentSlug });
       await queryClient.fetchQuery<Skill[]>({
         queryKey: ["skills"],
         queryFn: () => invoke("scan_all_skills"),
@@ -376,7 +376,7 @@ function MarketplaceSkillDetail({
   detectedAgents: AgentConfig[];
   localSkills: Skill[] | undefined;
   onInstall: (targetAgents: string[]) => void;
-  onUninstall: (skillPath: string, agentSlug: string) => void;
+  onUninstall: (skillId: string, agentSlug: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -393,10 +393,14 @@ function MarketplaceSkillDetail({
       const nameMatches = s.name === skill.name || s.id === skill.name;
       if (!nameMatches) return false;
 
-      // When repository exists, require source repository to match as well.
+      // When both sides have a repo URL, require them to match.
+      // If the local skill has no repo info (e.g. installed via canonical path),
+      // fall through to name-only matching.
       if (remoteRepo) {
         const localRepo = normalizeRepoUrl(sourceRepository(s.source));
-        return localRepo === remoteRepo;
+        if (localRepo) {
+          return localRepo === remoteRepo;
+        }
       }
 
       return true;
@@ -509,21 +513,35 @@ function MarketplaceSkillDetail({
             >
               <div className="space-y-1.5">
                 {detectedAgents.map((agent) => {
-                  const isInstalled = localAgents.includes(agent.slug);
                   const installation = localSkill?.installations.find(
                     (i) => i.agent_slug === agent.slug
                   );
+                  const isDirect = installation && !installation.is_inherited;
+                  const isInherited = installation?.is_inherited ?? false;
+                  const status = isDirect
+                    ? "installed"
+                    : isInherited
+                      ? "inherited"
+                      : "not-installed";
+                  const sourceAgent = isInherited && installation?.inherited_from
+                    ? detectedAgents.find((a) => a.slug === installation.inherited_from)?.name ?? installation.inherited_from
+                    : undefined;
                   return (
                     <AgentRow
                       key={agent.slug}
                       name={agent.name}
-                      status={isInstalled ? "installed" : "not-installed"}
+                      status={status}
                       path={installation?.path}
-                      onUninstall={installation ? () => onUninstall(installation.path, agent.slug) : undefined}
+                      tags={sourceAgent ? (
+                        <span className="text-[10px] text-muted-foreground/60 shrink-0">
+                          via {sourceAgent}
+                        </span>
+                      ) : undefined}
+                      onUninstall={isDirect && localSkill ? () => onUninstall(localSkill.id, agent.slug) : undefined}
                       onInstall={() => onInstall([agent.slug])}
                       uninstallTitle={`Uninstall from ${agent.name}`}
-                      installLabel={t("marketplace.install")}
-                      installTitle={`${t("marketplace.install")} ${agent.name}`}
+                      installLabel={hasAnyInstalled ? t("marketplace.sync") : t("marketplace.install")}
+                      installTitle={`${hasAnyInstalled ? t("marketplace.sync") : t("marketplace.install")} → ${agent.name}`}
                       revealTitle={t("marketplace.revealInFinder")}
                       disabled={anyInstalling || !skill.repository}
                       action={installingAgents.has(agent.slug) ? (

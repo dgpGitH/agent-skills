@@ -25,6 +25,7 @@ pub fn run() {
             commands::skills::scan_agent_skills,
             commands::skills::install_skill,
             commands::skills::uninstall_skill,
+            commands::skills::uninstall_skill_all,
             commands::skills::sync_skill,
             commands::skills::read_skill_content,
             commands::skills::write_skill_content,

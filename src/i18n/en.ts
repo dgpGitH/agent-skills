@@ -87,6 +87,7 @@ const en = {
     via: "via {{name}}",
     symlink: "symlink",
     install: "Install",
+    sync: "Sync",
     uninstall: "Uninstall",
     // Actions
     actions: "Actions",
@@ -140,6 +141,7 @@ const en = {
     sortDownloads: "Downloads",
     sortStars: "Stars",
     revealInFinder: "Reveal in Finder",
+    sync: "Sync",
     installFailed: "Could not install skill.",
     uninstallFailed: "Could not uninstall skill.",
   },

@@ -3,7 +3,12 @@ name = "Cursor"
 enabled = true
 global_paths = ["~/.cursor/skills"]
 skill_format = "skill-md"
-cli_command = "cursor"
+cli_command = "agent"
 install_command = "curl https://cursor.com/install -fsS | bash"
+install_command_windows = "winget install Anysphere.Cursor"
 install_docs_url = "https://cursor.com/docs/cli/overview"
 install_source_label = "official-docs"
+
+[[additional_readable_paths]]
+path = "~/.claude/skills"
+source_agent = "claude-code"

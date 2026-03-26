@@ -33,6 +33,9 @@ pub fn load_agent_configs(dir: &Path) -> Result<Vec<AgentConfig>, RegistryError>
             .into_iter()
             .map(|p| expand_home(&p))
             .collect();
+        for rp in &mut config.additional_readable_paths {
+            rp.path = expand_home(&rp.path);
+        }
         configs.push(config);
     }
     configs.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -44,24 +47,39 @@ pub fn detect_agents(configs: &[AgentConfig]) -> Vec<AgentConfig> {
 }
 
 fn detect_agent(config: &AgentConfig) -> AgentConfig {
+    // 1. Check CLI command first (most reliable)
     let mut detected = config
-        .global_paths
-        .iter()
-        .map(PathBuf::from)
-        .any(|p| p.exists());
+        .cli_command
+        .as_ref()
+        .is_some_and(|cmd| command_exists(cmd));
+
+    // 2. Check if agent config directory exists (parent of skills path)
+    //    e.g. ~/.claude/skills → check ~/.claude/
+    //    e.g. ~/.codeium/windsurf/skills → check ~/.codeium/windsurf/
     if !detected {
-        if let Some(cli_command) = &config.cli_command {
-            detected = command_exists(cli_command);
-        }
+        detected = config
+            .global_paths
+            .iter()
+            .map(PathBuf::from)
+            .any(|p| {
+                p.exists()
+                    || p.file_name()
+                        .is_some_and(|name| name == "skills" && p.parent().is_some_and(|parent| parent.exists()))
+            });
     }
+
     let mut cloned = config.clone();
     cloned.detected = detected;
     cloned
 }
 
 fn command_exists(command: &str) -> bool {
-    let status = Command::new("which").arg(command).status();
-    matches!(status, Ok(s) if s.success())
+    let check = if cfg!(target_os = "windows") {
+        Command::new("where.exe").arg(command).status()
+    } else {
+        Command::new("which").arg(command).status()
+    };
+    matches!(check, Ok(s) if s.success())
 }
 
 pub fn expand_home(path: &str) -> String {
@@ -105,6 +123,41 @@ cli_command = "codex"
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].slug, "codex");
         assert!(loaded[0].global_paths[0].starts_with('/'));
+    }
+
+    #[test]
+    fn parse_toml_with_readable_paths() {
+        let dir = test_dir("readable");
+        let config = r#"
+slug = "opencode"
+name = "OpenCode"
+enabled = true
+global_paths = ["~/.opencode/skills"]
+skill_format = "skill-md"
+cli_command = "opencode"
+
+[[additional_readable_paths]]
+path = "~/.claude/skills"
+source_agent = "claude-code"
+
+[[additional_readable_paths]]
+path = "~/.agents/skills"
+source_agent = "shared"
+"#;
+        fs::write(dir.join("opencode.toml"), config).expect("write config");
+
+        let loaded = load_agent_configs(&dir).expect("load configs");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].additional_readable_paths.len(), 2);
+        assert!(loaded[0].additional_readable_paths[0].path.starts_with('/'));
+        assert_eq!(
+            loaded[0].additional_readable_paths[0].source_agent,
+            "claude-code"
+        );
+        assert_eq!(
+            loaded[0].additional_readable_paths[1].source_agent,
+            "shared"
+        );
     }
 
     #[test]

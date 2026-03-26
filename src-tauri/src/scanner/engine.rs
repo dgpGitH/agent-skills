@@ -31,17 +31,17 @@ fn is_symlink(path: &Path) -> bool {
 
 /// Scan all skills across all agents, returning deduplicated results.
 ///
-/// Dedup key: directory name (skill id), matching Swift SkillScanner.
-///
 /// Strategy:
-/// 1. Scan each agent's skill directories
-/// 2. Resolve symlinks to get canonical path
-/// 3. Merge by directory name — same name = same skill
-/// 4. Track per-agent installations with symlink/inherited metadata
-/// 5. Upgrade scope to SharedGlobal if installed in >1 agent
+/// 1. Scan each agent's own skill directories (global_paths)
+/// 2. Scan each agent's additional_readable_paths as inherited installations
+/// 3. Resolve symlinks to get canonical path
+/// 4. Merge by directory name (dedup key) — same name = same skill
+/// 5. Track per-agent installations with symlink/inherited metadata
+/// 6. Upgrade scope to SharedGlobal if installed in >1 agent
 pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerError> {
     let mut dedup: HashMap<String, Skill> = HashMap::new();
 
+    // Pass 1: Scan each agent's own directories (direct installations)
     for agent in configs.iter().filter(|cfg| cfg.detected || !cfg.global_paths.is_empty()) {
         for root in &agent.global_paths {
             let root_path = PathBuf::from(root);
@@ -59,9 +59,84 @@ pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerErr
         }
     }
 
+    // Pass 2: Scan additional readable paths (inherited installations)
+    for agent in configs.iter().filter(|cfg| cfg.detected) {
+        for readable in &agent.additional_readable_paths {
+            let root_path = PathBuf::from(&readable.path);
+            if !root_path.exists() {
+                continue;
+            }
+            scan_inherited_root(
+                &root_path,
+                agent,
+                &readable.source_agent,
+                &mut dedup,
+            )?;
+        }
+    }
+
     let mut items: Vec<Skill> = dedup.into_values().collect();
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(items)
+}
+
+/// Scan a readable directory for inherited skills (read-only, from another agent or shared).
+fn scan_inherited_root(
+    root: &Path,
+    agent: &AgentConfig,
+    source_agent: &str,
+    dedup: &mut HashMap<String, Skill>,
+) -> Result<(), ScannerError> {
+    for dir in fs::read_dir(root)?.flatten() {
+        let skill_dir = dir.path();
+        if !skill_dir.is_dir() && !is_symlink(&skill_dir) {
+            continue;
+        }
+        let canonical = resolve_canonical(&skill_dir);
+        let skill_md = canonical.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        let parsed = match parse_skill_md_file(&skill_md) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("skipping {}: {e}", skill_md.display());
+                continue;
+            }
+        };
+        let dir_name = skill_dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown-skill")
+            .to_string();
+        let skill_name = parsed.name.clone().unwrap_or_else(|| dir_name.clone());
+
+        let installation = SkillInstallation {
+            agent_slug: agent.slug.clone(),
+            path: skill_dir.to_string_lossy().to_string(),
+            is_symlink: is_symlink(&skill_dir),
+            is_inherited: true,
+            inherited_from: Some(source_agent.to_string()),
+        };
+
+        merge_skill(
+            dedup,
+            dir_name.clone(),
+            Skill {
+                id: dir_name,
+                name: skill_name,
+                description: parsed.description,
+                canonical_path: canonical.to_string_lossy().to_string(),
+                source: Some(SkillSource::LocalPath {
+                    path: canonical.to_string_lossy().to_string(),
+                }),
+                metadata: parsed.metadata,
+                scope: SkillScope::SharedGlobal,
+                installations: vec![installation],
+            },
+        );
+    }
+    Ok(())
 }
 
 fn scan_skill_md_root(
@@ -244,7 +319,7 @@ fn merge_skill(dedup: &mut HashMap<String, Skill>, key: String, incoming: Skill)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::agent::AgentConfig;
+    use crate::models::agent::{AgentConfig, ReadablePath};
 
     fn test_dir(name: &str) -> PathBuf {
         let millis = std::time::SystemTime::now()
@@ -317,7 +392,6 @@ mod tests {
         let root2 = test_dir("sym-agent2");
         let canonical_dir = test_dir("sym-canonical");
 
-        // Create canonical skill
         let skill_canon = canonical_dir.join("my-skill");
         fs::create_dir_all(&skill_canon).expect("create canonical skill");
         fs::write(
@@ -326,12 +400,10 @@ mod tests {
         )
         .expect("write skill");
 
-        // Create symlink in agent1 dir
         let link1 = root1.join("my-skill");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&skill_canon, &link1).expect("create symlink");
 
-        // Create symlink in agent2 dir
         let link2 = root2.join("my-skill");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&skill_canon, &link2).expect("create symlink");
@@ -356,5 +428,91 @@ mod tests {
         assert_eq!(skills[0].installations.len(), 2);
         assert!(skills[0].installations.iter().all(|i| i.is_symlink));
         assert_eq!(skills[0].scope, SkillScope::SharedGlobal);
+    }
+
+    #[test]
+    fn scan_additional_readable_paths() {
+        let shared = test_dir("readable-shared");
+        let claude_dir = test_dir("readable-claude");
+
+        // Skill in shared dir
+        let shared_skill = shared.join("my-shared-skill");
+        fs::create_dir_all(&shared_skill).expect("create shared skill dir");
+        fs::write(
+            shared_skill.join("SKILL.md"),
+            "---\nname: Shared Skill\ndescription: from shared\n---\nBody",
+        )
+        .expect("write skill");
+
+        // Skill in claude dir
+        let claude_skill = claude_dir.join("claude-only");
+        fs::create_dir_all(&claude_skill).expect("create claude skill dir");
+        fs::write(
+            claude_skill.join("SKILL.md"),
+            "---\nname: Claude Only\n---\nBody",
+        )
+        .expect("write skill");
+
+        // Codex reads ~/.agents/skills (shared)
+        let cfg_codex = AgentConfig {
+            slug: "codex".to_string(),
+            name: "Codex".to_string(),
+            global_paths: vec![],
+            detected: true,
+            additional_readable_paths: vec![ReadablePath {
+                path: shared.to_string_lossy().to_string(),
+                source_agent: "shared".to_string(),
+            }],
+            ..Default::default()
+        };
+        // Cursor reads ~/.claude/skills
+        let cfg_cursor = AgentConfig {
+            slug: "cursor".to_string(),
+            name: "Cursor".to_string(),
+            global_paths: vec![],
+            detected: true,
+            additional_readable_paths: vec![ReadablePath {
+                path: claude_dir.to_string_lossy().to_string(),
+                source_agent: "claude-code".to_string(),
+            }],
+            ..Default::default()
+        };
+        // Claude Code has no additional readable paths
+        let cfg_claude = AgentConfig {
+            slug: "claude-code".to_string(),
+            name: "Claude Code".to_string(),
+            global_paths: vec![claude_dir.to_string_lossy().to_string()],
+            detected: true,
+            ..Default::default()
+        };
+
+        let skills = scan_all_skills(&[cfg_codex, cfg_cursor, cfg_claude]).expect("scan");
+        assert_eq!(skills.len(), 2);
+
+        let shared_skill = skills.iter().find(|s| s.id == "my-shared-skill").unwrap();
+        assert_eq!(shared_skill.installations.len(), 1);
+        assert_eq!(shared_skill.installations[0].agent_slug, "codex");
+        assert!(shared_skill.installations[0].is_inherited);
+        assert_eq!(
+            shared_skill.installations[0].inherited_from.as_deref(),
+            Some("shared")
+        );
+
+        let claude_skill = skills.iter().find(|s| s.id == "claude-only").unwrap();
+        // Claude (direct) + Cursor (inherited)
+        assert_eq!(claude_skill.installations.len(), 2);
+        let direct = claude_skill
+            .installations
+            .iter()
+            .find(|i| i.agent_slug == "claude-code")
+            .unwrap();
+        assert!(!direct.is_inherited);
+        let inherited = claude_skill
+            .installations
+            .iter()
+            .find(|i| i.agent_slug == "cursor")
+            .unwrap();
+        assert!(inherited.is_inherited);
+        assert_eq!(inherited.inherited_from.as_deref(), Some("claude-code"));
     }
 }

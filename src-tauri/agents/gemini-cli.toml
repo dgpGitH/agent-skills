@@ -7,3 +7,7 @@ cli_command = "gemini"
 install_command = "npm install -g @google/gemini-cli"
 install_docs_url = "https://google-gemini.github.io/gemini-cli/docs/get-started/"
 install_source_label = "official-docs"
+
+[[additional_readable_paths]]
+path = "~/.agents/skills"
+source_agent = "shared"

@@ -454,9 +454,7 @@ fn install_repo_skill_sync(
     }
 
     let agents = load_detected_agents()?;
-    for agent_slug in &target_agents {
-        install_skill_from_path(&skill_path, agent_slug, &agents).map_err(|e| e.to_string())?;
-    }
+    install_skill_from_path(&skill_path, &target_agents, &agents).map_err(|e| e.to_string())?;
 
     Ok(())
 }

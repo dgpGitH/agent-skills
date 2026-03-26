@@ -83,41 +83,22 @@ fn install_from_marketplace_sync(
 
     let result = match skill_dir {
         Some(dir) => {
-            // 3. Install from the discovered path to each agent
-            let mut errors: Vec<String> = Vec::new();
-            for agent_slug in &target_agents {
-                if let Err(e) = install_skill_from_path(&dir, agent_slug, &agents) {
-                    errors.push(format!("{agent_slug}: {e}"));
-                }
-            }
-            if errors.len() == target_agents.len() {
-                // All failed
-                Err(errors.join("; "))
-            } else {
-                Ok(())
-            }
+            // 3. Install from the discovered path to all target agents
+            install_skill_from_path(&dir, &target_agents, &agents)
+                .map_err(|e| e.to_string())
         }
         None => {
             // Fallback: no matching skill found via scan, try repo root
             // This handles single-skill repos where the repo IS the skill
-            let mut errors: Vec<String> = Vec::new();
-            for agent_slug in &target_agents {
-                if let Err(e) = install_skill_from_path(&temp_dir, agent_slug, &agents) {
-                    errors.push(format!("{agent_slug}: {e}"));
-                }
-            }
-            if errors.len() == target_agents.len() {
-                Err(errors.join("; "))
-            } else {
-                Ok(())
-            }
+            install_skill_from_path(&temp_dir, &target_agents, &agents)
+                .map_err(|e| e.to_string())
         }
     };
 
     // 4. Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    result
+    result.map(|_| ())
 }
 
 /// Walk the cloned repo directory, find all SKILL.md files, and match the target skill.
