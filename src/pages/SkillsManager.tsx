@@ -848,11 +848,13 @@ function SkillEditor({
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
+            className="gap-1 px-2"
             onClick={onBack}
             title={t("skills.backToDetail")}
           >
-            <ArrowLeft className="size-4" />
+            <ArrowLeft className="size-3.5" />
+            {t("skills.backToDetail")}
           </Button>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-medium truncate">{skill.name}</h3>

@@ -114,12 +114,15 @@ fn resolve_skill_source(
 
 #[tauri::command]
 pub fn read_skill_content(path: String) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    // Normalize mixed separators (e.g. \\?\C:\...\skill/SKILL.md → \\?\C:\...\skill\SKILL.md)
+    let normalized: std::path::PathBuf = path.replace('/', std::path::MAIN_SEPARATOR_STR).into();
+    std::fs::read_to_string(&normalized).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn write_skill_content(path: String, content: String) -> Result<(), String> {
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let normalized: std::path::PathBuf = path.replace('/', std::path::MAIN_SEPARATOR_STR).into();
+    std::fs::write(&normalized, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
