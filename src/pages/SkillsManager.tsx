@@ -14,7 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { AgentRow } from "@/components/AgentRow";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { useSkills, installedAgents, type Skill } from "@/hooks/useSkills";
+import { useSkills, installedAgents, allAgents, type Skill } from "@/hooks/useSkills";
 import { useRepos } from "@/hooks/useRepos";
 
 /** Skill extended with optional repo origin */
@@ -75,13 +75,14 @@ export default function SkillsManager() {
     });
 
     // Add repo-only skills (not installed locally)
+    // Clear their virtual installations so they don't appear as "directly installed"
     const repoOnly: SkillWithRepo[] = [];
     repoSkillsData.forEach((data, idx) => {
       if (data) {
         const repoName = repos?.[idx]?.name ?? "Repo";
         for (const s of data) {
           if (!localById.has(s.id)) {
-            repoOnly.push({ ...s, _repoName: repoName });
+            repoOnly.push({ ...s, installations: [], _repoName: repoName });
           }
         }
       }
@@ -162,13 +163,13 @@ export default function SkillsManager() {
 
   const detectedAgents = agents?.filter((a) => a.detected) ?? [];
 
-  // Filter by agent, then by deferred search query (name + description)
+  // Filter by agent (direct + inherited), then by search query
   const filtered = useMemo(() => {
-    // Exclude skills that only have inherited installations (no direct install)
-    const directlyInstalled = mergedSkills?.filter((s) => installedAgents(s).length > 0);
+    // Only show skills that have at least one installation (direct or inherited)
+    const available = mergedSkills?.filter((s) => allAgents(s).length > 0);
     let list = filter === "all"
-      ? directlyInstalled
-      : directlyInstalled?.filter((s) => installedAgents(s).includes(filter));
+      ? available
+      : available?.filter((s) => allAgents(s).includes(filter));
     if (deferredSearch.trim()) {
       const q = deferredSearch.toLowerCase();
       list = list?.filter(
@@ -391,12 +392,17 @@ const SkillListItem = memo(function SkillListItem({
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const hasInstallations = installedAgents(skill).length > 0;
+  const directSlugs = installedAgents(skill);
+  const inheritedSlugs = skill.installations
+    .filter((i) => i.is_inherited)
+    .map((i) => i.agent_slug)
+    .filter((s) => !directSlugs.includes(s));
+  const hasDirectInstall = directSlugs.length > 0;
+  const inheritedOnly = !hasDirectInstall && inheritedSlugs.length > 0;
 
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    // Register on next frame so the opening event doesn't immediately close the menu
     const raf = requestAnimationFrame(() => {
       document.addEventListener("click", close);
       document.addEventListener("contextmenu", close);
@@ -417,6 +423,7 @@ const SkillListItem = memo(function SkillListItem({
           selected
             ? "glass glass-shine-always"
             : "border border-transparent hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
+          inheritedOnly && "opacity-60",
         )}
         onClick={() => onSelect(skill)}
         onContextMenu={(e) => {
@@ -431,10 +438,18 @@ const SkillListItem = memo(function SkillListItem({
           </p>
         )}
         <div className="flex flex-wrap gap-1 mt-1.5">
-          {installedAgents(skill).map((slug) => (
+          {directSlugs.map((slug) => (
             <span
               key={slug}
               className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground"
+            >
+              {agents?.find((a) => a.slug === slug)?.name ?? slug}
+            </span>
+          ))}
+          {inheritedSlugs.map((slug) => (
+            <span
+              key={slug}
+              className="rounded-full border border-dashed border-muted-foreground/30 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
             >
               {agents?.find((a) => a.slug === slug)?.name ?? slug}
             </span>
@@ -456,7 +471,7 @@ const SkillListItem = memo(function SkillListItem({
           >
             {t("skills.revealInFinder")}
           </button>
-          {hasInstallations && (
+          {hasDirectInstall && (
             <button
               className="w-full px-2.5 py-1.5 text-[13px] text-left rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
               onClick={() => {
@@ -546,17 +561,32 @@ function SkillDetail({
   const deferredSkillPath = useDeferredValue(skill.canonical_path);
   const isStale = deferredSkillPath !== skill.canonical_path;
 
-  // Load SKILL.md content — cached by path so switching back is instant
+  // Load SKILL.md content — try local first, fall back to remote if empty
   const skillMdPath = deferredSkillPath.endsWith("SKILL.md")
     ? deferredSkillPath
     : deferredSkillPath + "/SKILL.md";
   const { data: docContent, isLoading: docLoading } = useQuery<string | null>({
-    queryKey: ["skill-content-local", skillMdPath],
+    queryKey: ["skill-content", skillMdPath, sourceRepo],
     queryFn: async () => {
-      const text = await invoke<string>("read_skill_content", { path: skillMdPath });
-      return extractMarkdownBody(text);
+      // Try local SKILL.md first
+      try {
+        const text = await invoke<string>("read_skill_content", { path: skillMdPath });
+        const body = extractMarkdownBody(text);
+        if (body && body.trim().length > 0) return body;
+      } catch { /* local read failed, fall through */ }
+      // Fallback: fetch from remote repository if source info is available
+      if (sourceRepo) {
+        try {
+          const text = await invoke<string>("fetch_remote_skill_content", {
+            repoUrl: sourceRepo,
+            skillName: skill.id,
+          });
+          return extractMarkdownBody(text);
+        } catch { /* remote also unavailable */ }
+      }
+      return null;
     },
-    staleTime: 60 * 1000, // local file, cache 1 min
+    staleTime: 60 * 1000,
     retry: false,
   });
 

@@ -5,8 +5,6 @@ pub enum SkillFormat {
     #[default]
     #[serde(rename = "skill-md")]
     SkillMd,
-    #[serde(rename = "gemini-extension")]
-    GeminiExtension,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::models::agent::{AgentConfig, SkillFormat};
+use crate::models::agent::AgentConfig;
+use crate::installer::install::read_provenance;
 use crate::models::skill::{Skill, SkillInstallation, SkillScope, SkillSource};
 use crate::parser::skillmd::parse_skill_md_file;
 
@@ -40,6 +41,7 @@ fn is_symlink(path: &Path) -> bool {
 /// 6. Upgrade scope to SharedGlobal if installed in >1 agent
 pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerError> {
     let mut dedup: HashMap<String, Skill> = HashMap::new();
+    let provenance = read_provenance();
 
     // Pass 1: Scan each agent's own directories (direct installations)
     for agent in configs.iter().filter(|cfg| cfg.detected || !cfg.global_paths.is_empty()) {
@@ -48,14 +50,7 @@ pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerErr
             if !root_path.exists() {
                 continue;
             }
-            match agent.skill_format {
-                SkillFormat::SkillMd => {
-                    scan_skill_md_root(&root_path, agent, &mut dedup)?;
-                }
-                SkillFormat::GeminiExtension => {
-                    scan_gemini_root(&root_path, agent, &mut dedup)?;
-                }
-            }
+            scan_skill_md_root(&root_path, agent, &mut dedup, &provenance)?;
         }
     }
 
@@ -71,6 +66,7 @@ pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerErr
                 agent,
                 &readable.source_agent,
                 &mut dedup,
+                &provenance,
             )?;
         }
     }
@@ -86,6 +82,7 @@ fn scan_inherited_root(
     agent: &AgentConfig,
     source_agent: &str,
     dedup: &mut HashMap<String, Skill>,
+    provenance: &HashMap<String, serde_json::Value>,
 ) -> Result<(), ScannerError> {
     for dir in fs::read_dir(root)?.flatten() {
         let skill_dir = dir.path();
@@ -104,6 +101,12 @@ fn scan_inherited_root(
                 continue;
             }
         };
+
+        // A valid skill must have a description in frontmatter
+        if parsed.description.is_none() {
+            continue;
+        }
+
         let dir_name = skill_dir
             .file_name()
             .and_then(|f| f.to_str())
@@ -123,13 +126,11 @@ fn scan_inherited_root(
             dedup,
             dir_name.clone(),
             Skill {
-                id: dir_name,
+                id: dir_name.clone(),
                 name: skill_name,
                 description: parsed.description,
                 canonical_path: canonical.to_string_lossy().to_string(),
-                source: Some(SkillSource::LocalPath {
-                    path: canonical.to_string_lossy().to_string(),
-                }),
+                source: Some(resolve_source(&dir_name, &canonical, provenance)),
                 metadata: parsed.metadata,
                 scope: SkillScope::SharedGlobal,
                 installations: vec![installation],
@@ -143,6 +144,7 @@ fn scan_skill_md_root(
     root: &Path,
     agent: &AgentConfig,
     dedup: &mut HashMap<String, Skill>,
+    provenance: &HashMap<String, serde_json::Value>,
 ) -> Result<(), ScannerError> {
     for dir in fs::read_dir(root)? {
         let dir = dir?;
@@ -166,6 +168,11 @@ fn scan_skill_md_root(
             }
         };
 
+        // A valid skill must have a description in frontmatter
+        if parsed.description.is_none() {
+            continue;
+        }
+
         // Dedup key = directory name
         let dir_name = skill_dir
             .file_name()
@@ -184,21 +191,21 @@ fn scan_skill_md_root(
             inherited_from: None,
         };
 
+        let skill_id = skill_dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown-skill")
+            .to_string();
+
         merge_skill(
             dedup,
             dir_name,
             Skill {
-                id: skill_dir
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("unknown-skill")
-                    .to_string(),
+                id: skill_id.clone(),
                 name: skill_name,
                 description: parsed.description,
                 canonical_path: canonical.to_string_lossy().to_string(),
-                source: Some(SkillSource::LocalPath {
-                    path: canonical.to_string_lossy().to_string(),
-                }),
+                source: Some(resolve_source(&skill_id, &canonical, provenance)),
                 metadata: parsed.metadata,
                 scope: SkillScope::AgentLocal {
                     agent: agent.slug.clone(),
@@ -210,79 +217,37 @@ fn scan_skill_md_root(
     Ok(())
 }
 
-fn scan_gemini_root(
-    root: &Path,
-    agent: &AgentConfig,
-    dedup: &mut HashMap<String, Skill>,
-) -> Result<(), ScannerError> {
-    for dir in fs::read_dir(root)? {
-        let dir = dir?;
-        let skill_dir = dir.path();
-        if !skill_dir.is_dir() && !is_symlink(&skill_dir) {
-            continue;
-        }
-
-        let canonical = resolve_canonical(&skill_dir);
-        let ext_file = canonical.join("gemini-extension.json");
-        if !ext_file.is_file() {
-            continue;
-        }
-
-        let content = fs::read_to_string(&ext_file)?;
-        let json: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| ScannerError::Parse(e.to_string()))?;
-
-        let dir_name = skill_dir
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("gemini-extension")
-            .to_string();
-
-        let name = json
-            .get("name")
+/// Resolve the source of a skill from the provenance registry, falling back to LocalPath.
+fn resolve_source(
+    skill_id: &str,
+    canonical: &Path,
+    provenance: &HashMap<String, serde_json::Value>,
+) -> SkillSource {
+    if let Some(entry) = provenance.get(skill_id) {
+        let src = entry.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let repo = entry
+            .get("repository")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| dir_name.clone());
-
-        let description = json
-            .get("description")
+            .map(String::from);
+        let skill_path = entry
+            .get("skill_path")
             .and_then(|v| v.as_str())
-            .map(str::to_string);
-
-        let symlink = is_symlink(&skill_dir);
-
-        let installation = SkillInstallation {
-            agent_slug: agent.slug.clone(),
-            path: skill_dir.to_string_lossy().to_string(),
-            is_symlink: symlink,
-            is_inherited: false,
-            inherited_from: None,
-        };
-
-        merge_skill(
-            dedup,
-            dir_name,
-            Skill {
-                id: skill_dir
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("gemini-extension")
-                    .to_string(),
-                name,
-                description,
-                canonical_path: canonical.to_string_lossy().to_string(),
-                source: Some(SkillSource::LocalPath {
-                    path: canonical.to_string_lossy().to_string(),
-                }),
-                metadata: Some(json),
-                scope: SkillScope::AgentLocal {
-                    agent: agent.slug.clone(),
-                },
-                installations: vec![installation],
-            },
-        );
+            .map(String::from);
+        match src {
+            "skills.sh" => return SkillSource::SkillsSh { repository: repo },
+            "clawhub" => return SkillSource::ClawHub { repository: repo },
+            "git" => {
+                return SkillSource::GitRepository {
+                    repo_url: repo.unwrap_or_default(),
+                    skill_path,
+                }
+            }
+            _ => {}
+        }
     }
-    Ok(())
+    SkillSource::LocalPath {
+        path: canonical.to_string_lossy().to_string(),
+    }
 }
 
 /// Merge an incoming skill into the dedup map.
@@ -364,29 +329,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_gemini_extension() {
-        let root = test_dir("gemini");
-        let ext_dir = root.join("ext");
-        fs::create_dir_all(&ext_dir).expect("create ext dir");
-        fs::write(
-            ext_dir.join("gemini-extension.json"),
-            r#"{"name":"Gem Skill","description":"Gemini extension"}"#,
-        )
-        .expect("write extension");
-        let cfg = AgentConfig {
-            slug: "gemini-cli".to_string(),
-            name: "Gemini".to_string(),
-            global_paths: vec![root.to_string_lossy().to_string()],
-            skill_format: SkillFormat::GeminiExtension,
-            detected: true,
-            ..Default::default()
-        };
-        let skills = scan_all_skills(&[cfg]).expect("scan");
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "Gem Skill");
-    }
-
-    #[test]
     fn symlink_resolved_and_merged() {
         let root1 = test_dir("sym-agent1");
         let root2 = test_dir("sym-agent2");
@@ -396,7 +338,7 @@ mod tests {
         fs::create_dir_all(&skill_canon).expect("create canonical skill");
         fs::write(
             skill_canon.join("SKILL.md"),
-            "---\nname: My Skill\n---\nBody",
+            "---\nname: My Skill\ndescription: test skill\n---\nBody",
         )
         .expect("write skill");
 
@@ -449,7 +391,7 @@ mod tests {
         fs::create_dir_all(&claude_skill).expect("create claude skill dir");
         fs::write(
             claude_skill.join("SKILL.md"),
-            "---\nname: Claude Only\n---\nBody",
+            "---\nname: Claude Only\ndescription: claude only skill\n---\nBody",
         )
         .expect("write skill");
 

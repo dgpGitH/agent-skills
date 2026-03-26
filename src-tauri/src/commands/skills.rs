@@ -2,7 +2,7 @@ use std::path::Path;
 
 use reqwest::blocking::Client;
 
-use crate::installer::install::{install_skill_from_git, install_skill_from_path};
+use crate::installer::install::{install_skill_from_git, install_skill_from_git_with_source, install_skill_from_path};
 use crate::installer::uninstall::{
     uninstall_skill as uninstall_skill_impl,
     uninstall_skill_from_all as uninstall_skill_from_all_impl,
@@ -53,9 +53,15 @@ pub fn install_skill(source: SkillSource, target_agents: Vec<String>) -> Result<
                 .map_err(|e| e.to_string())?;
             Ok(())
         }
-        SkillSource::SkillsSh { repository } | SkillSource::ClawHub { repository } => {
+        SkillSource::SkillsSh { repository } => {
             let repo = repository.ok_or_else(|| "repository url is required".to_string())?;
-            install_skill_from_git(&repo, ".", &target_agents, &agents)
+            install_skill_from_git_with_source(&repo, ".", &target_agents, &agents, "skills.sh")
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        SkillSource::ClawHub { repository } => {
+            let repo = repository.ok_or_else(|| "repository url is required".to_string())?;
+            install_skill_from_git_with_source(&repo, ".", &target_agents, &agents, "clawhub")
                 .map_err(|e| e.to_string())?;
             Ok(())
         }

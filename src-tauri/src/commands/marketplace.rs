@@ -98,6 +98,20 @@ fn install_from_marketplace_sync(
     // 4. Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
 
+    // 5. Record provenance so the scanner can restore the source later
+    if let Ok(ref canonical_dir) = result {
+        let skill_id = canonical_dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown");
+        crate::installer::install::write_provenance(
+            skill_id,
+            &skill.source,
+            Some(repo_url.as_str()),
+            None,
+        );
+    }
+
     result.map(|_| ())
 }
 

@@ -54,6 +54,7 @@ pub fn uninstall_skill(
 
         if !still_referenced {
             remove_entry(&canonical);
+            crate::installer::install::remove_provenance(skill_id);
         }
     }
 
@@ -112,9 +113,10 @@ pub fn uninstall_skill_from_all(
         }
     }
 
-    // Remove canonical copy
+    // Remove canonical copy + provenance
     let canonical = shared_skills_dir().join(skill_id);
     remove_entry(&canonical);
+    crate::installer::install::remove_provenance(skill_id);
 
     // Registry cleanup
     let _ = cleanup_registry_entry(

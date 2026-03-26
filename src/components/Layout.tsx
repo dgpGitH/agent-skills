@@ -11,7 +11,7 @@ import ImportWizard from "@/components/ImportWizard";
 import { useResizable } from "@/hooks/useResizable";
 import ResizeHandle from "@/components/ResizeHandle";
 import { useAgents } from "@/hooks/useAgents";
-import { useSkills, installedAgents } from "@/hooks/useSkills";
+import { useSkills, allAgents } from "@/hooks/useSkills";
 
 // Hoisted outside component — stable reference, no re-creation per render
 const NAV_LINK_BASE = "flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium border outline-none focus-visible:ring-2 focus-visible:ring-ring/50 transition-[color,background-color,border-color,box-shadow,opacity] duration-150";
@@ -42,11 +42,11 @@ export default function Layout() {
     [agents],
   );
 
-  // Count skills per agent
+  // Count skills per agent (direct + inherited = all available)
   const skillCountByAgent = useMemo(() => {
     const counts = new Map<string, number>();
     for (const skill of skills ?? []) {
-      for (const slug of installedAgents(skill)) {
+      for (const slug of allAgents(skill)) {
         counts.set(slug, (counts.get(slug) ?? 0) + 1);
       }
     }
