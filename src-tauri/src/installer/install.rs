@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use git2::Repository;
+use git2::{build::RepoBuilder, FetchOptions, ProxyOptions};
 use handlebars::Handlebars;
 use serde_json::json;
 use thiserror::Error;
@@ -199,7 +199,15 @@ pub fn install_skill_from_git_with_source(
             .expect("clock drift")
             .as_millis()
     ));
-    Repository::clone(repo_url, &temp_dir)?;
+    {
+        let mut proxy = ProxyOptions::new();
+        proxy.auto();
+        let mut fetch = FetchOptions::new();
+        fetch.proxy_options(proxy);
+        RepoBuilder::new()
+            .fetch_options(fetch)
+            .clone(repo_url, &temp_dir)?;
+    }
     let source = temp_dir.join(skill_relative_path);
     let skill_name = derive_git_target_skill_name(repo_url, skill_relative_path, &source);
     let installed =

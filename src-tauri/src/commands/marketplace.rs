@@ -75,8 +75,16 @@ fn install_from_marketplace_sync(
             .expect("clock drift")
             .as_millis()
     ));
-    git2::Repository::clone(&repo_url, &temp_dir)
-        .map_err(|e| format!("git clone failed: {e}"))?;
+    {
+        let mut proxy = git2::ProxyOptions::new();
+        proxy.auto();
+        let mut fetch = git2::FetchOptions::new();
+        fetch.proxy_options(proxy);
+        git2::build::RepoBuilder::new()
+            .fetch_options(fetch)
+            .clone(&repo_url, &temp_dir)
+            .map_err(|e| format!("git clone failed: {e}"))?;
+    }
 
     // 2. Scan the cloned repo for SKILL.md files and find the matching skill
     let skill_dir = find_skill_in_repo(&temp_dir, &skill.name);

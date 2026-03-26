@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use git2::Repository;
+use git2::{build::RepoBuilder, FetchOptions, ProxyOptions, Repository};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -177,6 +177,15 @@ fn emit_progress(app: &AppHandle, stage: &str, detail: Option<&str>) {
     });
 }
 
+/// Build FetchOptions with automatic proxy detection (git config, env vars, system proxy).
+fn proxy_fetch_options<'a>() -> FetchOptions<'a> {
+    let mut proxy = ProxyOptions::new();
+    proxy.auto();
+    let mut opts = FetchOptions::new();
+    opts.proxy_options(proxy);
+    opts
+}
+
 fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<SkillRepo, String> {
     let id = repo_id(&repo_url);
     let local_path = repos_dir().join(&id);
@@ -193,12 +202,15 @@ fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<SkillRepo, S
 
     emit_progress(app, "cloning", Some(&repo_url));
 
-    // Clone the repository
-    Repository::clone(&repo_url, &local_path).map_err(|e| {
-        // Clean up on failure
-        let _ = fs::remove_dir_all(&local_path);
-        format!("Failed to clone repository: {}", e)
-    })?;
+    // Clone the repository (with proxy auto-detection)
+    RepoBuilder::new()
+        .fetch_options(proxy_fetch_options())
+        .clone(&repo_url, &local_path)
+        .map_err(|e| {
+            // Clean up on failure
+            let _ = fs::remove_dir_all(&local_path);
+            format!("Failed to clone repository: {}", e)
+        })?;
 
     emit_progress(app, "scanning", None);
 
@@ -315,10 +327,10 @@ fn sync_skill_repo_sync(app: &AppHandle, repo_id_param: String) -> Result<SkillR
     // Open and pull
     let repo = Repository::open(&local_path).map_err(|e| e.to_string())?;
 
-    // Fetch origin
+    // Fetch origin (with proxy auto-detection)
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
     remote
-        .fetch(&["HEAD"], None, None)
+        .fetch(&["HEAD"], Some(&mut proxy_fetch_options()), None)
         .map_err(|e| e.to_string())?;
 
     emit_progress(app, "merging", None);
