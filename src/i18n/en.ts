@@ -120,6 +120,8 @@ const en = {
     installed: "Installed",
     installAll: "Install All",
     installing: "Installing...",
+    uninstalling: "Uninstalling...",
+    syncing: "Syncing...",
     install: "Install",
     agentsLabel: "Agents ({{installed}}/{{total}})",
     // Package Info

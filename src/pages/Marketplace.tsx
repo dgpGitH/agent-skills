@@ -13,9 +13,9 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AgentRow } from "@/components/AgentRow";
 import { useAgents, type AgentConfig } from "@/hooks/useAgents";
-import { useSkills, installedAgents as getInstalledAgents, type Skill } from "@/hooks/useSkills";
+import { useSkills, type Skill } from "@/hooks/useSkills";
+import { SkillAgentList, installedAgentCount, busyKey, type BusyOp } from "@/components/SkillAgentList";
 import MarkdownContent from "@/components/MarkdownContent";
 import { useResizable } from "@/hooks/useResizable";
 import ResizeHandle from "@/components/ResizeHandle";
@@ -46,8 +46,7 @@ export default function Marketplace() {
   const [skillsshSort, setSkillsshSort] = useState("all-time");
   const [clawhubSort, setClawhubSort] = useState("default");
   const [searchQuery, setSearchQuery] = useState("");
-  // Track which agent slugs are currently being installed
-  const [installingAgents, setInstallingAgents] = useState<Set<string>>(new Set());
+  const [busyAgents, setBusyAgents] = useState<Map<string, BusyOp>>(new Map());
   // selectedKey drives list highlight (instant); detail uses deferred key
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const { data: agents } = useAgents();
@@ -126,17 +125,16 @@ export default function Marketplace() {
     targetAgents: string[]
   ) {
     if (!targetAgents.length) return;
-    // Mark specific agents as installing
-    setInstallingAgents((prev) => {
-      const next = new Set(prev);
-      targetAgents.forEach((a) => next.add(a));
+    const localSkill = findLocalSkill(localSkills, skill.name, skill.repository);
+    const op: BusyOp = localSkill ? "syncing" : "installing";
+    // Use localSkill.id when available, fall back to skill.name for first-time installs
+    const sid = localSkill?.id ?? skill.name;
+    setBusyAgents((prev) => {
+      const next = new Map(prev);
+      targetAgents.forEach((a) => next.set(busyKey(sid, a), op));
       return next;
     });
     try {
-      // Check if any agent already has this skill installed locally
-      const localSkill = localSkills?.find(
-        (s) => s.name === skill.name || s.id === skill.name
-      );
       if (localSkill) {
         // Fast path: copy from local installation (no git clone needed)
         await invoke("sync_skill", {
@@ -160,16 +158,17 @@ export default function Marketplace() {
       console.error("Install failed:", e instanceof Error ? e.message : String(e));
       toast(t("marketplace.installFailed"), "destructive");
     } finally {
-      setInstallingAgents((prev) => {
-        const next = new Set(prev);
-        targetAgents.forEach((a) => next.delete(a));
+      setBusyAgents((prev) => {
+        const next = new Map(prev);
+        targetAgents.forEach((a) => next.delete(busyKey(sid, a)));
         return next;
       });
     }
   }
 
   async function handleUninstall(skillId: string, agentSlug: string) {
-    setInstallingAgents((prev) => new Set(prev).add(agentSlug));
+    const k = busyKey(skillId, agentSlug);
+    setBusyAgents((prev) => new Map(prev).set(k, "uninstalling"));
     try {
       await invoke("uninstall_skill", { skillId, agentSlug });
       await queryClient.fetchQuery<Skill[]>({
@@ -181,9 +180,9 @@ export default function Marketplace() {
       console.error("Uninstall failed:", e instanceof Error ? e.message : String(e));
       toast(t("marketplace.uninstallFailed"), "destructive");
     } finally {
-      setInstallingAgents((prev) => {
-        const next = new Set(prev);
-        next.delete(agentSlug);
+      setBusyAgents((prev) => {
+        const next = new Map(prev);
+        next.delete(k);
         return next;
       });
     }
@@ -299,7 +298,7 @@ export default function Marketplace() {
         ) : (
           <MarketplaceSkillDetail
             skill={selectedSkill}
-            installingAgents={installingAgents}
+            busyAgents={busyAgents}
             detectedAgents={detectedAgents}
             localSkills={localSkills}
             onInstall={(targets) => handleInstall(selectedSkill, targets)}
@@ -364,7 +363,7 @@ const MarketplaceListItem = memo(function MarketplaceListItem({
 
 function MarketplaceSkillDetail({
   skill,
-  installingAgents,
+  busyAgents,
   detectedAgents,
   localSkills,
   onInstall,
@@ -372,7 +371,7 @@ function MarketplaceSkillDetail({
   onClose,
 }: {
   skill: MarketplaceSkill;
-  installingAgents: Set<string>;
+  busyAgents: Map<string, BusyOp>;
   detectedAgents: AgentConfig[];
   localSkills: Skill[] | undefined;
   onInstall: (targetAgents: string[]) => void;
@@ -380,41 +379,24 @@ function MarketplaceSkillDetail({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const anyInstalling = installingAgents.size > 0;
-  const remoteRepo = useMemo(
-    () => normalizeRepoUrl(skill.repository),
-    [skill.repository]
+  const anyBusy = busyAgents.size > 0;
+  const isInstalling = [...busyAgents.values()].some((op) => op === "installing" || op === "syncing");
+  // Find the matching local skill (if any agent has it installed)
+  const localSkill = useMemo(
+    () => findLocalSkill(localSkills, skill.name, skill.repository),
+    [localSkills, skill.name, skill.repository],
   );
 
-  // Find the matching local skill (if any agent has it installed)
-  const localSkill = useMemo(() => {
-    if (!localSkills?.length) return undefined;
-    return localSkills.find((s) => {
-      const nameMatches = s.name === skill.name || s.id === skill.name;
-      if (!nameMatches) return false;
-
-      // When both sides have a repo URL, require them to match.
-      // If the local skill has no repo info (e.g. installed via canonical path),
-      // fall through to name-only matching.
-      if (remoteRepo) {
-        const localRepo = normalizeRepoUrl(sourceRepository(s.source));
-        if (localRepo) {
-          return localRepo === remoteRepo;
-        }
-      }
-
-      return true;
-    });
-  }, [localSkills, skill.name, remoteRepo]);
-
   // Compute install status once per relevant update
-  const { localAgents, hasAnyInstalled, allInstalled, notInstalledAgents } = useMemo(() => {
-    const agents = localSkill ? getInstalledAgents(localSkill) : [];
-    const agentSet = new Set(agents);
-    const notInstalled = detectedAgents.filter((a) => !agentSet.has(a.slug));
+  const { installedCount, hasAnyInstalled, allInstalled, notInstalledAgents } = useMemo(() => {
+    const count = installedAgentCount(localSkill, detectedAgents);
+    const allAgentSet = new Set(
+      localSkill ? localSkill.installations.map((i) => i.agent_slug) : [],
+    );
+    const notInstalled = detectedAgents.filter((a) => !allAgentSet.has(a.slug));
     return {
-      localAgents: agents,
-      hasAnyInstalled: agents.length > 0,
+      installedCount: count,
+      hasAnyInstalled: !!localSkill,
       allInstalled: detectedAgents.length > 0 && notInstalled.length === 0,
       notInstalledAgents: notInstalled,
     };
@@ -463,24 +445,24 @@ function MarketplaceSkillDetail({
             {hasAnyInstalled ? (
               <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-green-500/15 text-green-600 px-2.5 py-1 text-xs font-medium">
                 <Check className="size-3" />
-                {allInstalled ? t("marketplace.installed") : `${localAgents.length}/${detectedAgents.length}`}
+                {allInstalled ? t("marketplace.installed") : `${installedCount}/${detectedAgents.length}`}
               </span>
             ) : (
               <Button
                 variant="default"
                 size="sm"
                 className="shrink-0 gap-1.5 min-w-[100px]"
-                disabled={anyInstalling || !detectedAgents.length || !skill.repository}
+                disabled={anyBusy || !detectedAgents.length || !skill.repository}
                 onClick={() =>
                   onInstall(notInstalledAgents.map((a) => a.slug))
                 }
               >
-                {anyInstalling ? (
+                {isInstalling ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Download className="size-3.5" />
                 )}
-                {anyInstalling ? t("marketplace.installing") : t("marketplace.installAll")}
+                {isInstalling ? t("marketplace.installing") : t("marketplace.installAll")}
               </Button>
             )}
           </div>
@@ -509,51 +491,16 @@ function MarketplaceSkillDetail({
         {detectedAgents.length > 0 && (
           <>
             <InfoSection
-              label={t("marketplace.agentsLabel", { installed: localAgents.length, total: detectedAgents.length })}
+              label={t("marketplace.agentsLabel", { installed: installedAgentCount(localSkill, detectedAgents), total: detectedAgents.length })}
             >
-              <div className="space-y-1.5">
-                {detectedAgents.map((agent) => {
-                  const installation = localSkill?.installations.find(
-                    (i) => i.agent_slug === agent.slug
-                  );
-                  const isDirect = installation && !installation.is_inherited;
-                  const isInherited = installation?.is_inherited ?? false;
-                  const status = isDirect
-                    ? "installed"
-                    : isInherited
-                      ? "inherited"
-                      : "not-installed";
-                  const sourceAgent = isInherited && installation?.inherited_from
-                    ? installation.inherited_from === "shared" ? t("skills.sharedDirectory") : detectedAgents.find((a) => a.slug === installation.inherited_from)?.name ?? installation.inherited_from
-                    : undefined;
-                  return (
-                    <AgentRow
-                      key={agent.slug}
-                      name={agent.name}
-                      status={status}
-                      path={installation?.path}
-                      tags={sourceAgent ? (
-                        <span className="text-[10px] text-muted-foreground/60 shrink-0">
-                          {t("skills.via", { name: sourceAgent })}
-                        </span>
-                      ) : undefined}
-                      onUninstall={isDirect && localSkill ? () => onUninstall(localSkill.id, agent.slug) : undefined}
-                      onInstall={() => onInstall([agent.slug])}
-                      uninstallTitle={`Uninstall from ${agent.name}`}
-                      installLabel={hasAnyInstalled ? t("marketplace.sync") : t("marketplace.install")}
-                      installTitle={`${hasAnyInstalled ? t("marketplace.sync") : t("marketplace.install")} → ${agent.name}`}
-                      revealTitle={t("marketplace.revealInFinder")}
-                      disabled={anyInstalling || !skill.repository}
-                      action={installingAgents.has(agent.slug) ? (
-                        <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Loader2 className="size-2.5 animate-spin" />
-                          {t("marketplace.installing")}
-                        </span>
-                      ) : undefined}
-                    />
-                  );
-                })}
-              </div>
+              <SkillAgentList
+                skill={localSkill}
+                skillIdOverride={skill.name}
+                detectedAgents={detectedAgents}
+                busyAgents={busyAgents}
+                onInstall={onInstall}
+                onUninstall={(skillId, agentSlug) => onUninstall(skillId, agentSlug)}
+              />
             </InfoSection>
             <hr className="border-border" />
           </>
@@ -691,6 +638,25 @@ function InfoRow({
       <div>{children}</div>
     </>
   );
+}
+
+/** Find the matching local skill for a marketplace skill, checking repo URL when available */
+function findLocalSkill(
+  localSkills: Skill[] | undefined,
+  skillName: string,
+  repoUrl: string | null | undefined,
+): Skill | undefined {
+  if (!localSkills?.length) return undefined;
+  const remoteRepo = normalizeRepoUrl(repoUrl);
+  return localSkills.find((s) => {
+    const nameMatches = s.name === skillName || s.id === skillName;
+    if (!nameMatches) return false;
+    if (remoteRepo) {
+      const localRepo = normalizeRepoUrl(sourceRepository(s.source));
+      if (localRepo) return localRepo === remoteRepo;
+    }
+    return true;
+  });
 }
 
 function sourceRepository(source: unknown): string | null {

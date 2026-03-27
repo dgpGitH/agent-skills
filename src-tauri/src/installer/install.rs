@@ -294,10 +294,14 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), std::io::Error
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = target.join(entry.file_name());
-        if src_path.is_dir() {
+        let ft = entry.metadata()?.file_type();
+        if ft.is_symlink() {
+            // Skip symlinks — don't dereference to avoid copying large external trees
+            continue;
+        } else if ft.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(src_path, dst_path)?;
+            fs::copy(&src_path, &dst_path)?;
         }
     }
     Ok(())

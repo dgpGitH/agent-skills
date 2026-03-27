@@ -120,6 +120,8 @@ const zhCN = {
     installed: "已安装",
     installAll: "全部安装",
     installing: "安装中...",
+    uninstalling: "卸载中...",
+    syncing: "同步中...",
     install: "安装",
     agentsLabel: "Agent ({{installed}}/{{total}})",
     // Package Info

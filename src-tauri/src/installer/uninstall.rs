@@ -46,10 +46,15 @@ pub fn uninstall_skill(
             if a.slug == agent_slug {
                 return false; // skip the agent we just removed from
             }
-            a.global_paths.iter().any(|root| {
-                let link = PathBuf::from(root).join(skill_id);
-                link.exists()
-            })
+            // Check global_paths (direct installs / symlinks)
+            let in_global = a.global_paths.iter().any(|root| {
+                PathBuf::from(root).join(skill_id).exists()
+            });
+            // Check additional_readable_paths (agents reading shared dir)
+            let in_readable = a.additional_readable_paths.iter().any(|rp| {
+                PathBuf::from(&rp.path).join(skill_id).exists()
+            });
+            in_global || in_readable
         });
 
         if !still_referenced {
@@ -154,7 +159,10 @@ fn cleanup_registry_entry(registry_path: &Path, skill_id: &str) -> Result<(), Un
         skills.retain(|item| {
             item.get("path")
                 .and_then(|v| v.as_str())
-                .map(|path| !path.ends_with(&format!("/{skill_id}")))
+                .map(|path| {
+                    !path.ends_with(&format!("/{skill_id}"))
+                        && !path.ends_with(&format!("\\{skill_id}"))
+                })
                 .unwrap_or(true)
         });
         if skills.len() != before {

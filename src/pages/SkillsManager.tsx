@@ -12,9 +12,9 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
-import { AgentRow } from "@/components/AgentRow";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useSkills, installedAgents, allAgents, type Skill } from "@/hooks/useSkills";
+import { SkillAgentList, installedAgentCount, busyKey, type BusyOp } from "@/components/SkillAgentList";
 import { useRepos } from "@/hooks/useRepos";
 
 /** Skill extended with optional repo origin */
@@ -96,7 +96,7 @@ export default function SkillsManager() {
   const [filter, setFilter] = useState<string>(
     searchParams.get("agent") ?? "all"
   );
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busyAgents, setBusyAgents] = useState<Map<string, BusyOp>>(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearch = useDeferredValue(searchQuery);
   const isSearchStale = deferredSearch !== searchQuery;
@@ -199,7 +199,8 @@ export default function SkillsManager() {
   }
 
   async function handleUninstall(skillId: string, agentSlug: string) {
-    setBusy(skillId + agentSlug);
+    const k = busyKey(skillId, agentSlug);
+    setBusyAgents((prev) => new Map(prev).set(k, "uninstalling"));
     try {
       await invoke("uninstall_skill", { skillId, agentSlug });
       await refreshAndReselect();
@@ -207,14 +208,18 @@ export default function SkillsManager() {
       console.error("Uninstall failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.uninstallFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents((prev) => { const next = new Map(prev); next.delete(k); return next; });
     }
   }
 
   async function handleUninstallAll(skill: Skill) {
     const slugs = installedAgents(skill);
     if (!slugs.length) return;
-    setBusy(skill.id);
+    setBusyAgents((prev) => {
+      const next = new Map(prev);
+      slugs.forEach((s) => next.set(busyKey(skill.id, s), "uninstalling"));
+      return next;
+    });
     try {
       await invoke("uninstall_skill_all", { skillId: skill.id });
       setSelectedId(null);
@@ -224,12 +229,16 @@ export default function SkillsManager() {
       console.error("Uninstall all failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.uninstallFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents(new Map());
     }
   }
 
   async function handleSync(skillId: string, targetAgents: string[]) {
-    setBusy(skillId);
+    setBusyAgents((prev) => {
+      const next = new Map(prev);
+      targetAgents.forEach((a) => next.set(busyKey(skillId, a), "syncing"));
+      return next;
+    });
     try {
       await invoke("sync_skill", { skillId, targetAgents });
       await refreshAndReselect();
@@ -237,7 +246,11 @@ export default function SkillsManager() {
       console.error("Sync failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.syncFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents((prev) => {
+        const next = new Map(prev);
+        targetAgents.forEach((a) => next.delete(busyKey(skillId, a)));
+        return next;
+      });
     }
   }
 
@@ -356,7 +369,7 @@ export default function SkillsManager() {
           <SkillDetail
             skill={selectedSkill}
             detectedAgents={detectedAgents}
-            busy={busy}
+            busyAgents={busyAgents}
             onClose={closePanel}
             onEdit={() => setPanelMode("editor")}
             onSync={handleSync}
@@ -535,7 +548,7 @@ function getSourceRepo(source: unknown): string | null {
 function SkillDetail({
   skill,
   detectedAgents,
-  busy,
+  busyAgents,
   onClose,
   onEdit,
   onSync,
@@ -543,15 +556,16 @@ function SkillDetail({
 }: {
   skill: Skill;
   detectedAgents: AgentConfig[];
-  busy: string | null;
+  busyAgents: Map<string, BusyOp>;
   onClose: () => void;
   onEdit: () => void;
   onSync: (skillId: string, targetAgents: string[]) => void;
   onUninstall: (skillId: string, agentSlug: string) => void;
 }) {
   const { t } = useTranslation();
+  const allAgentSlugs = new Set(allAgents(skill));
   const syncTargets = detectedAgents.filter(
-    (a) => !installedAgents(skill).includes(a.slug)
+    (a) => !allAgentSlugs.has(a.slug)
   );
   const sourceLabel = getSourceLabel(skill.source, t);
   const sourceRepo = getSourceRepo(skill.source);
@@ -683,40 +697,14 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Agent Assignment */}
-        <DetailSection label={t("skills.agentsLabel", { installed: installedAgents(skill).length, total: detectedAgents.length })}>
-          <div className="space-y-1.5">
-            {detectedAgents.map((agent) => {
-              const inst = skill.installations.find(
-                (i) => i.agent_slug === agent.slug && !i.is_inherited
-              );
-              const inheritedInst = skill.installations.find(
-                (i) => i.agent_slug === agent.slug && i.is_inherited
-              );
-              const installation = inst ?? inheritedInst;
-              const installed = !!inst;
-              const inherited = !inst && !!inheritedInst;
-              return (
-                <AgentRow
-                  key={agent.slug}
-                  name={agent.name}
-                  status={installed ? "installed" : inherited ? "inherited" : "not-installed"}
-                  path={installation?.path}
-                  tags={inherited && inheritedInst?.inherited_from ? (
-                    <span className="text-[10px] text-muted-foreground/60 shrink-0">
-                      {t("skills.via", { name: inheritedInst.inherited_from === "shared" ? t("skills.sharedDirectory") : detectedAgents.find((a) => a.slug === inheritedInst.inherited_from)?.name ?? inheritedInst.inherited_from })}
-                    </span>
-                  ) : undefined}
-                  onUninstall={() => onUninstall(skill.id, agent.slug)}
-                  onInstall={() => onSync(skill.id, [agent.slug])}
-                  uninstallTitle={`${t("skills.uninstall")} ${agent.name}`}
-                  installLabel={t("skills.sync")}
-                  installTitle={`${t("skills.sync")} → ${agent.name}`}
-                  revealTitle={t("skills.revealInFinder")}
-                  disabled={busy === skill.id + agent.slug}
-                />
-              );
-            })}
-          </div>
+        <DetailSection label={t("skills.agentsLabel", { installed: installedAgentCount(skill, detectedAgents), total: detectedAgents.length })}>
+          <SkillAgentList
+            skill={skill}
+            detectedAgents={detectedAgents}
+            busyAgents={busyAgents}
+            onInstall={(targets) => onSync(skill.id, targets)}
+            onUninstall={onUninstall}
+          />
         </DetailSection>
 
         <hr className="border-border" />
@@ -738,7 +726,7 @@ function SkillDetail({
                 variant="outline"
                 size="sm"
                 className="w-full justify-start gap-2"
-                disabled={busy === skill.id}
+                disabled={busyAgents.size > 0}
                 onClick={() =>
                   onSync(
                     skill.id,
