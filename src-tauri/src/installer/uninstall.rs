@@ -59,33 +59,21 @@ pub fn uninstall_skill(
 
         if !still_referenced {
             remove_entry(&canonical);
-            crate::installer::install::remove_provenance(skill_id);
+            let _ = crate::installer::install::remove_provenance(skill_id);
         }
     }
 
-    // Step 3: Clean up agent-specific extra config / registry
+    // Step 3: Clean up agent-specific registry entries
     if let Some(cfgs) = &agent.extra_config {
         for cfg in cfgs {
             if let Some(target_file) = &cfg.target_file {
                 let path = expand_home_path(target_file);
                 if path.is_file() {
-                    let _ = fs::remove_file(path);
+                    // Try registry cleanup (remove skill entry from JSON array)
+                    let _ = cleanup_registry_entry(&path, skill_id);
                 }
             }
         }
-    }
-
-    if agent_slug == "cursor" {
-        let _ = cleanup_registry_entry(
-            &expand_home_path("~/.cursor/manifest.json"),
-            skill_id,
-        );
-    }
-    if agent_slug == "openclaw" {
-        let _ = cleanup_registry_entry(
-            &expand_home_path("~/.openclaw/openclaw.json"),
-            skill_id,
-        );
     }
 
     Ok(())
@@ -105,13 +93,13 @@ pub fn uninstall_skill_from_all(
             remove_entry(&agent_skill);
         }
 
-        // Clean up extra config
+        // Clean up extra config registries
         if let Some(cfgs) = &agent.extra_config {
             for cfg in cfgs {
                 if let Some(target_file) = &cfg.target_file {
                     let path = expand_home_path(target_file);
                     if path.is_file() {
-                        let _ = fs::remove_file(path);
+                        let _ = cleanup_registry_entry(&path, skill_id);
                     }
                 }
             }
@@ -121,17 +109,7 @@ pub fn uninstall_skill_from_all(
     // Remove canonical copy + provenance
     let canonical = shared_skills_dir().join(skill_id);
     remove_entry(&canonical);
-    crate::installer::install::remove_provenance(skill_id);
-
-    // Registry cleanup
-    let _ = cleanup_registry_entry(
-        &expand_home_path("~/.cursor/manifest.json"),
-        skill_id,
-    );
-    let _ = cleanup_registry_entry(
-        &expand_home_path("~/.openclaw/openclaw.json"),
-        skill_id,
-    );
+    let _ = crate::installer::install::remove_provenance(skill_id);
 
     Ok(())
 }

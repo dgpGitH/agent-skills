@@ -149,11 +149,12 @@ export default function Marketplace() {
         });
       }
       // Refresh local skills so "Installed" state updates
-      await queryClient.fetchQuery<Skill[]>({
+      const updated = await queryClient.fetchQuery<Skill[]>({
         queryKey: ["skills"],
         queryFn: () => invoke("scan_all_skills"),
         staleTime: 0,
       });
+      queryClient.setQueryData(["skills"], updated);
     } catch (e) {
       console.error("Install failed:", e instanceof Error ? e.message : String(e));
       toast(t("marketplace.installFailed"), "destructive");
@@ -171,11 +172,12 @@ export default function Marketplace() {
     setBusyAgents((prev) => new Map(prev).set(k, "uninstalling"));
     try {
       await invoke("uninstall_skill", { skillId, agentSlug });
-      await queryClient.fetchQuery<Skill[]>({
+      const updated = await queryClient.fetchQuery<Skill[]>({
         queryKey: ["skills"],
         queryFn: () => invoke("scan_all_skills"),
         staleTime: 0,
       });
+      queryClient.setQueryData(["skills"], updated);
     } catch (e) {
       console.error("Uninstall failed:", e instanceof Error ? e.message : String(e));
       toast(t("marketplace.uninstallFailed"), "destructive");

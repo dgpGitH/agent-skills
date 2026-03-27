@@ -37,7 +37,8 @@ function AppInner() {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen("skills-changed", () => {
-      queryClient.invalidateQueries();
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
+      queryClient.invalidateQueries({ queryKey: ["repo-skills"] });
     })
       .then((cleanup) => {
         unlisten = cleanup;

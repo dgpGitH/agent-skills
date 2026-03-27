@@ -105,6 +105,10 @@ pub async fn sync_skill(skill_id: String, target_agents: Vec<String>) -> Result<
         let agents = load_detected_agents()?;
         let source = resolve_skill_source(&skill_id, &agents)?;
         install_skill_from_path(&source, &target_agents, &agents).map_err(|e| e.to_string())?;
+        // Preserve provenance: install_skill_from_path copies to canonical but does not
+        // touch the provenance registry, so any existing provenance entry for this
+        // skill_id is automatically retained. If the skill was only in an agent dir
+        // (not canonical) and had no provenance, there is nothing to preserve.
         Ok(())
     })
     .await

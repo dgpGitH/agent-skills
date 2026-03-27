@@ -129,7 +129,8 @@ fn install_from_marketplace_sync(
             &skill.source,
             Some(repo_url.as_str()),
             None,
-        );
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     result.map(|_| ())

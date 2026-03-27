@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod clawhub;
 pub mod skillssh;
 

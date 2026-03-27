@@ -221,7 +221,8 @@ pub fn install_skill_from_git_with_source(
         .unwrap_or("unknown");
     let rel = skill_relative_path.trim();
     let skill_path = if rel.is_empty() || rel == "." { None } else { Some(rel) };
-    write_provenance(skill_id, source_label, Some(repo_url), skill_path);
+    write_provenance(skill_id, source_label, Some(repo_url), skill_path)
+        .map_err(InstallError::Io)?;
 
     Ok(installed)
 }
@@ -333,7 +334,7 @@ pub fn write_provenance(
     source: &str,
     repository: Option<&str>,
     skill_path: Option<&str>,
-) {
+) -> Result<(), std::io::Error> {
     let mut map = read_provenance();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -348,21 +349,18 @@ pub fn write_provenance(
             "installed_at": now,
         }),
     );
-    let _ = fs::write(
-        provenance_path(),
-        serde_json::to_string_pretty(&map).unwrap_or_default(),
-    );
+    let content = serde_json::to_string_pretty(&map).unwrap_or_default();
+    fs::write(provenance_path(), content)
 }
 
 /// Remove a provenance entry (e.g. on uninstall).
-pub fn remove_provenance(skill_id: &str) {
+pub fn remove_provenance(skill_id: &str) -> Result<(), std::io::Error> {
     let mut map = read_provenance();
     if map.remove(skill_id).is_some() {
-        let _ = fs::write(
-            provenance_path(),
-            serde_json::to_string_pretty(&map).unwrap_or_default(),
-        );
+        let content = serde_json::to_string_pretty(&map).unwrap_or_default();
+        fs::write(provenance_path(), content)?;
     }
+    Ok(())
 }
 
 // The cross-agent shared skills directory per the Agent Skills specification.

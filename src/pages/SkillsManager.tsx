@@ -791,6 +791,7 @@ function SkillEditor({
 }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [content, setContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -821,6 +822,9 @@ function SkillEditor({
     try {
       await invoke("write_skill_content", { path: skillMdPath, content });
       setDirty(false);
+      // Invalidate cached content and skill metadata (name/description may have changed)
+      queryClient.invalidateQueries({ queryKey: ["skill-content"] });
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
     } catch (e) {
       console.error("Save failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.saveFailed"), "destructive");
