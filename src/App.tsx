@@ -39,6 +39,7 @@ function AppInner() {
     listen("skills-changed", () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
       queryClient.invalidateQueries({ queryKey: ["repo-skills"] });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
     })
       .then((cleanup) => {
         unlisten = cleanup;

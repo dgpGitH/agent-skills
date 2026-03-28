@@ -133,6 +133,16 @@ export default function SkillsManager() {
     }
   }, [mergedSkills, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep selectedSkill in sync when underlying data refreshes (e.g. filesystem changes)
+  useEffect(() => {
+    if (selectedId && mergedSkills?.length) {
+      const refreshed = mergedSkills.find((s) => s.id === selectedId);
+      if (refreshed) {
+        setSelectedSkill(refreshed);
+      }
+    }
+  }, [mergedSkills, selectedId]);
+
   function changeFilter(f: string) {
     setFilter(f);
     if (f === "all") {
