@@ -311,8 +311,8 @@ install_macos() {
 
   local mount_output mount_point app_path
   mount_output="$(hdiutil attach "$DOWNLOAD_PATH" -nobrowse -noautoopen 2>&1)" || fatal "Failed to mount dmg: $mount_output"
-  mount_point="$(printf '%s\n' "$mount_output" | awk 'END {print $NF}')"
-  [[ -d "$mount_point" ]] || fatal "Invalid mount point: $mount_point"
+  mount_point="$(printf '%s\n' "$mount_output" | grep -o '/Volumes/.*' | head -1)"
+  [[ -n "$mount_point" && -d "$mount_point" ]] || fatal "Invalid mount point. hdiutil output:\n$mount_output"
 
   app_path=""
   for maybe_app in "$mount_point"/*.app; do
