@@ -12,9 +12,9 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
-import { AgentRow } from "@/components/AgentRow";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { useSkills, installedAgents, type Skill } from "@/hooks/useSkills";
+import { useSkills, installedAgents, allAgents, type Skill } from "@/hooks/useSkills";
+import { SkillAgentList, installedAgentCount, busyKey, type BusyOp } from "@/components/SkillAgentList";
 import { useRepos } from "@/hooks/useRepos";
 
 /** Skill extended with optional repo origin */
@@ -75,13 +75,14 @@ export default function SkillsManager() {
     });
 
     // Add repo-only skills (not installed locally)
+    // Clear their virtual installations so they don't appear as "directly installed"
     const repoOnly: SkillWithRepo[] = [];
     repoSkillsData.forEach((data, idx) => {
       if (data) {
         const repoName = repos?.[idx]?.name ?? "Repo";
         for (const s of data) {
           if (!localById.has(s.id)) {
-            repoOnly.push({ ...s, _repoName: repoName });
+            repoOnly.push({ ...s, installations: [], _repoName: repoName });
           }
         }
       }
@@ -95,7 +96,7 @@ export default function SkillsManager() {
   const [filter, setFilter] = useState<string>(
     searchParams.get("agent") ?? "all"
   );
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busyAgents, setBusyAgents] = useState<Map<string, BusyOp>>(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearch = useDeferredValue(searchQuery);
   const isSearchStale = deferredSearch !== searchQuery;
@@ -111,10 +112,12 @@ export default function SkillsManager() {
     storageKey: "skills-list-width",
   });
 
-  // Sync filter from URL
+  // Sync filter from URL — reset selection so auto-select picks the first item
   useEffect(() => {
-    const agentParam = searchParams.get("agent");
-    if (agentParam) setFilter(agentParam);
+    const agentParam = searchParams.get("agent") ?? "all";
+    setFilter(agentParam);
+    setSelectedId(null);
+    setSelectedSkill(null);
   }, [searchParams]);
 
   // Auto-select first skill when data loads or filter changes
@@ -130,6 +133,16 @@ export default function SkillsManager() {
     }
   }, [mergedSkills, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep selectedSkill in sync when underlying data refreshes (e.g. filesystem changes)
+  useEffect(() => {
+    if (selectedId && mergedSkills?.length) {
+      const refreshed = mergedSkills.find((s) => s.id === selectedId);
+      if (refreshed) {
+        setSelectedSkill(refreshed);
+      }
+    }
+  }, [mergedSkills, selectedId]);
+
   function changeFilter(f: string) {
     setFilter(f);
     if (f === "all") {
@@ -137,6 +150,9 @@ export default function SkillsManager() {
     } else {
       setSearchParams({ agent: f });
     }
+    // Reset selection so the auto-select effect picks the first item in the new list
+    setSelectedId(null);
+    setSelectedSkill(null);
   }
 
   const selectSkill = useCallback((skill: Skill) => {
@@ -157,11 +173,13 @@ export default function SkillsManager() {
 
   const detectedAgents = agents?.filter((a) => a.detected) ?? [];
 
-  // Filter by agent, then by deferred search query (name + description)
+  // Filter by agent (direct + inherited), then by search query
   const filtered = useMemo(() => {
+    // Only show skills that have at least one installation (direct or inherited)
+    const available = mergedSkills?.filter((s) => allAgents(s).length > 0);
     let list = filter === "all"
-      ? mergedSkills
-      : mergedSkills?.filter((s) => installedAgents(s).includes(filter));
+      ? available
+      : available?.filter((s) => allAgents(s).includes(filter));
     if (deferredSearch.trim()) {
       const q = deferredSearch.toLowerCase();
       list = list?.filter(
@@ -190,27 +208,30 @@ export default function SkillsManager() {
     }
   }
 
-  async function handleUninstall(skillPath: string, agentSlug: string) {
-    setBusy(skillPath + agentSlug);
+  async function handleUninstall(skillId: string, agentSlug: string) {
+    const k = busyKey(skillId, agentSlug);
+    setBusyAgents((prev) => new Map(prev).set(k, "uninstalling"));
     try {
-      await invoke("uninstall_skill", { skillId: skillPath, agentSlug });
+      await invoke("uninstall_skill", { skillId, agentSlug });
       await refreshAndReselect();
     } catch (e) {
       console.error("Uninstall failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.uninstallFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents((prev) => { const next = new Map(prev); next.delete(k); return next; });
     }
   }
 
   async function handleUninstallAll(skill: Skill) {
     const slugs = installedAgents(skill);
     if (!slugs.length) return;
-    setBusy(skill.canonical_path);
+    setBusyAgents((prev) => {
+      const next = new Map(prev);
+      slugs.forEach((s) => next.set(busyKey(skill.id, s), "uninstalling"));
+      return next;
+    });
     try {
-      for (const slug of slugs) {
-        await invoke("uninstall_skill", { skillId: skill.canonical_path, agentSlug: slug });
-      }
+      await invoke("uninstall_skill_all", { skillId: skill.id });
       setSelectedId(null);
       setSelectedSkill(null);
       await refreshAndReselect();
@@ -218,20 +239,28 @@ export default function SkillsManager() {
       console.error("Uninstall all failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.uninstallFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents(new Map());
     }
   }
 
-  async function handleSync(skillPath: string, targetAgents: string[]) {
-    setBusy(skillPath);
+  async function handleSync(skillId: string, targetAgents: string[]) {
+    setBusyAgents((prev) => {
+      const next = new Map(prev);
+      targetAgents.forEach((a) => next.set(busyKey(skillId, a), "syncing"));
+      return next;
+    });
     try {
-      await invoke("sync_skill", { skillId: skillPath, targetAgents });
+      await invoke("sync_skill", { skillId, targetAgents });
       await refreshAndReselect();
     } catch (e) {
       console.error("Sync failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.syncFailed"), "destructive");
     } finally {
-      setBusy(null);
+      setBusyAgents((prev) => {
+        const next = new Map(prev);
+        targetAgents.forEach((a) => next.delete(busyKey(skillId, a)));
+        return next;
+      });
     }
   }
 
@@ -350,7 +379,7 @@ export default function SkillsManager() {
           <SkillDetail
             skill={selectedSkill}
             detectedAgents={detectedAgents}
-            busy={busy}
+            busyAgents={busyAgents}
             onClose={closePanel}
             onEdit={() => setPanelMode("editor")}
             onSync={handleSync}
@@ -386,12 +415,17 @@ const SkillListItem = memo(function SkillListItem({
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const hasInstallations = installedAgents(skill).length > 0;
+  const directSlugs = installedAgents(skill);
+  const inheritedSlugs = skill.installations
+    .filter((i) => i.is_inherited)
+    .map((i) => i.agent_slug)
+    .filter((s) => !directSlugs.includes(s));
+  const hasDirectInstall = directSlugs.length > 0;
+  const inheritedOnly = !hasDirectInstall && inheritedSlugs.length > 0;
 
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    // Register on next frame so the opening event doesn't immediately close the menu
     const raf = requestAnimationFrame(() => {
       document.addEventListener("click", close);
       document.addEventListener("contextmenu", close);
@@ -412,6 +446,7 @@ const SkillListItem = memo(function SkillListItem({
           selected
             ? "glass glass-shine-always"
             : "border border-transparent hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
+          inheritedOnly && "opacity-60",
         )}
         onClick={() => onSelect(skill)}
         onContextMenu={(e) => {
@@ -426,10 +461,18 @@ const SkillListItem = memo(function SkillListItem({
           </p>
         )}
         <div className="flex flex-wrap gap-1 mt-1.5">
-          {installedAgents(skill).map((slug) => (
+          {directSlugs.map((slug) => (
             <span
               key={slug}
               className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground"
+            >
+              {agents?.find((a) => a.slug === slug)?.name ?? slug}
+            </span>
+          ))}
+          {inheritedSlugs.map((slug) => (
+            <span
+              key={slug}
+              className="rounded-full border border-dashed border-muted-foreground/30 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
             >
               {agents?.find((a) => a.slug === slug)?.name ?? slug}
             </span>
@@ -451,7 +494,7 @@ const SkillListItem = memo(function SkillListItem({
           >
             {t("skills.revealInFinder")}
           </button>
-          {hasInstallations && (
+          {hasDirectInstall && (
             <button
               className="w-full px-2.5 py-1.5 text-[13px] text-left rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
               onClick={() => {
@@ -515,7 +558,7 @@ function getSourceRepo(source: unknown): string | null {
 function SkillDetail({
   skill,
   detectedAgents,
-  busy,
+  busyAgents,
   onClose,
   onEdit,
   onSync,
@@ -523,15 +566,16 @@ function SkillDetail({
 }: {
   skill: Skill;
   detectedAgents: AgentConfig[];
-  busy: string | null;
+  busyAgents: Map<string, BusyOp>;
   onClose: () => void;
   onEdit: () => void;
-  onSync: (skillPath: string, targetAgents: string[]) => void;
-  onUninstall: (skillPath: string, agentSlug: string) => void;
+  onSync: (skillId: string, targetAgents: string[]) => void;
+  onUninstall: (skillId: string, agentSlug: string) => void;
 }) {
   const { t } = useTranslation();
+  const allAgentSlugs = new Set(allAgents(skill));
   const syncTargets = detectedAgents.filter(
-    (a) => !installedAgents(skill).includes(a.slug)
+    (a) => !allAgentSlugs.has(a.slug)
   );
   const sourceLabel = getSourceLabel(skill.source, t);
   const sourceRepo = getSourceRepo(skill.source);
@@ -541,24 +585,39 @@ function SkillDetail({
   const deferredSkillPath = useDeferredValue(skill.canonical_path);
   const isStale = deferredSkillPath !== skill.canonical_path;
 
-  // Load SKILL.md content — cached by path so switching back is instant
+  // Load SKILL.md content — try local first, fall back to remote if empty
   const skillMdPath = deferredSkillPath.endsWith("SKILL.md")
     ? deferredSkillPath
     : deferredSkillPath + "/SKILL.md";
   const { data: docContent, isLoading: docLoading } = useQuery<string | null>({
-    queryKey: ["skill-content-local", skillMdPath],
+    queryKey: ["skill-content", skillMdPath, sourceRepo],
     queryFn: async () => {
-      const text = await invoke<string>("read_skill_content", { path: skillMdPath });
-      return extractMarkdownBody(text);
+      // Try local SKILL.md first
+      try {
+        const text = await invoke<string>("read_skill_content", { path: skillMdPath });
+        const body = extractMarkdownBody(text);
+        if (body && body.trim().length > 0) return body;
+      } catch { /* local read failed, fall through */ }
+      // Fallback: fetch from remote repository if source info is available
+      if (sourceRepo) {
+        try {
+          const text = await invoke<string>("fetch_remote_skill_content", {
+            repoUrl: sourceRepo,
+            skillName: skill.id,
+          });
+          return extractMarkdownBody(text);
+        } catch { /* remote also unavailable */ }
+      }
+      return null;
     },
-    staleTime: 60 * 1000, // local file, cache 1 min
+    staleTime: 60 * 1000,
     retry: false,
   });
 
   return (
     <div className="flex-1 min-w-0 m-2 ml-0 rounded-2xl glass-panel flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3">
+      {/* Header — z-20 to sit above the title-bar drag overlay (z-10) */}
+      <div className="shrink-0 relative z-20 flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Info className="size-4 shrink-0 text-muted-foreground" />
           <h3 className="text-sm font-medium truncate">{t("skills.detail")}</h3>
@@ -580,13 +639,6 @@ function SkillDetail({
               {skill.description}
             </p>
           )}
-          <button
-            className="text-xs text-muted-foreground/60 hover:text-primary font-mono mt-1.5 break-all text-left transition-colors cursor-pointer"
-            title={t("skills.revealInFinder")}
-            onClick={() => revealItemInDir(skill.canonical_path)}
-          >
-            {skill.canonical_path}
-          </button>
         </div>
 
         <hr className="border-border" />
@@ -648,40 +700,14 @@ function SkillDetail({
         <hr className="border-border" />
 
         {/* Agent Assignment */}
-        <DetailSection label={t("skills.agentsLabel", { installed: installedAgents(skill).length, total: detectedAgents.length })}>
-          <div className="space-y-1.5">
-            {detectedAgents.map((agent) => {
-              const inst = skill.installations.find(
-                (i) => i.agent_slug === agent.slug && !i.is_inherited
-              );
-              const inheritedInst = skill.installations.find(
-                (i) => i.agent_slug === agent.slug && i.is_inherited
-              );
-              const installation = inst ?? inheritedInst;
-              const installed = !!inst;
-              const inherited = !inst && !!inheritedInst;
-              return (
-                <AgentRow
-                  key={agent.slug}
-                  name={agent.name}
-                  status={installed ? "installed" : inherited ? "inherited" : "not-installed"}
-                  path={installation?.path}
-                  tags={inherited && inheritedInst?.inherited_from ? (
-                    <span className="text-[10px] text-muted-foreground/60 shrink-0">
-                      {t("skills.via", { name: detectedAgents.find((a) => a.slug === inheritedInst.inherited_from)?.name ?? inheritedInst.inherited_from })}
-                    </span>
-                  ) : undefined}
-                  onUninstall={() => onUninstall(skill.canonical_path, agent.slug)}
-                  onInstall={() => onSync(skill.canonical_path, [agent.slug])}
-                  uninstallTitle={`${t("skills.uninstall")} ${agent.name}`}
-                  installLabel={t("skills.install")}
-                  installTitle={`${t("skills.install")} ${agent.name}`}
-                  revealTitle={t("skills.revealInFinder")}
-                  disabled={busy === skill.canonical_path + agent.slug}
-                />
-              );
-            })}
-          </div>
+        <DetailSection label={t("skills.agentsLabel", { installed: installedAgentCount(skill, detectedAgents), total: detectedAgents.length })}>
+          <SkillAgentList
+            skill={skill}
+            detectedAgents={detectedAgents}
+            busyAgents={busyAgents}
+            onInstall={(targets) => onSync(skill.id, targets)}
+            onUninstall={onUninstall}
+          />
         </DetailSection>
 
         <hr className="border-border" />
@@ -703,10 +729,10 @@ function SkillDetail({
                 variant="outline"
                 size="sm"
                 className="w-full justify-start gap-2"
-                disabled={busy === skill.canonical_path}
+                disabled={busyAgents.size > 0}
                 onClick={() =>
                   onSync(
-                    skill.canonical_path,
+                    skill.id,
                     syncTargets.map((a) => a.slug)
                   )
                 }
@@ -768,6 +794,7 @@ function SkillEditor({
 }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [content, setContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -798,6 +825,9 @@ function SkillEditor({
     try {
       await invoke("write_skill_content", { path: skillMdPath, content });
       setDirty(false);
+      // Invalidate cached content and skill metadata (name/description may have changed)
+      queryClient.invalidateQueries({ queryKey: ["skill-content"] });
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
     } catch (e) {
       console.error("Save failed:", e instanceof Error ? e.message : String(e));
       toast(t("skills.saveFailed"), "destructive");
@@ -808,12 +838,12 @@ function SkillEditor({
 
   return (
     <div className="flex-1 min-w-0 m-2 ml-0 rounded-2xl glass-panel flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3">
+      {/* Header — z-20 to sit above the title-bar drag overlay (z-10) */}
+      <div className="shrink-0 relative z-20 flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             onClick={onBack}
             title={t("skills.backToDetail")}
           >

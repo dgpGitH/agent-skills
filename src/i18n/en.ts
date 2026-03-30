@@ -84,9 +84,11 @@ const en = {
     skillMetadata: "Skill Metadata",
     // Agent Assignment
     agentsLabel: "Agents ({{installed}}/{{total}})",
-    via: "via {{name}}",
+    via: "Source: {{name}}",
+    sharedDirectory: "Shared Directory",
     symlink: "symlink",
     install: "Install",
+    sync: "Sync",
     uninstall: "Uninstall",
     // Actions
     actions: "Actions",
@@ -118,6 +120,8 @@ const en = {
     installed: "Installed",
     installAll: "Install All",
     installing: "Installing...",
+    uninstalling: "Uninstalling...",
+    syncing: "Syncing...",
     install: "Install",
     agentsLabel: "Agents ({{installed}}/{{total}})",
     // Package Info
@@ -140,6 +144,7 @@ const en = {
     sortDownloads: "Downloads",
     sortStars: "Stars",
     revealInFinder: "Reveal in Finder",
+    sync: "Sync",
     installFailed: "Could not install skill.",
     uninstallFailed: "Could not uninstall skill.",
   },

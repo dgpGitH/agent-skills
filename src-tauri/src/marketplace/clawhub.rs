@@ -1,13 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
-use rusqlite::{params, Connection};
 use serde::Deserialize;
 use thiserror::Error;
 
+use super::cache::{read_cache, read_cache_stale, write_cache};
 use super::MarketplaceSkill;
 
 #[derive(Debug, Error)]
@@ -33,8 +30,16 @@ pub fn fetch_clawhub(
     endpoint: &str,
     params_map: &HashMap<String, String>,
 ) -> Result<Vec<MarketplaceSkill>, ClawHubError> {
-    let cache_key = format!("clawhub:{endpoint}:{params_map:?}");
-    if let Some(cached) = read_cache(&cache_key)? {
+    // Build deterministic cache key by sorting params
+    let mut sorted_params: Vec<_> = params_map.iter().collect();
+    sorted_params.sort_by_key(|(k, _)| k.as_str());
+    let params_str: String = sorted_params
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let cache_key = format!("clawhub:{endpoint}:{params_str}");
+    if let Ok(Some(cached)) = read_cache(&cache_key) {
         return Ok(cached);
     }
 
@@ -67,36 +72,57 @@ pub fn fetch_clawhub(
         }
     }
 
-    let resp = http_client()?
+    let result = http_client()?
         .get(&url)
         .query(&query)
         .header("Accept", "application/json")
-        .send()?
-        .text()?;
+        .send()
+        .and_then(|r| r.text());
 
-    let skills = parse_skills_response(&resp);
-    write_cache(&cache_key, &skills, 5 * 60)?;
-    Ok(skills)
+    match result {
+        Ok(resp) => {
+            let skills = parse_skills_response(&resp);
+            let _ = write_cache(&cache_key, &skills, 5 * 60);
+            Ok(skills)
+        }
+        Err(e) => {
+            // Serve stale cache on network error
+            if let Ok(Some(stale)) = read_cache_stale(&cache_key) {
+                return Ok(stale);
+            }
+            Err(ClawHubError::Network(e))
+        }
+    }
 }
 
 /// Search ClawHub skills
 pub fn search_clawhub(query: &str) -> Result<Vec<MarketplaceSkill>, ClawHubError> {
     let cache_key = format!("clawhub:search:{query}");
-    if let Some(cached) = read_cache(&cache_key)? {
+    if let Ok(Some(cached)) = read_cache(&cache_key) {
         return Ok(cached);
     }
 
     let url = format!("{BASE_URL}/search");
-    let resp = http_client()?
+    let result = http_client()?
         .get(&url)
         .query(&[("q", query), ("limit", "50")])
         .header("Accept", "application/json")
-        .send()?
-        .text()?;
+        .send()
+        .and_then(|r| r.text());
 
-    let skills = parse_search_response(&resp);
-    write_cache(&cache_key, &skills, 5 * 60)?;
-    Ok(skills)
+    match result {
+        Ok(resp) => {
+            let skills = parse_search_response(&resp);
+            let _ = write_cache(&cache_key, &skills, 5 * 60);
+            Ok(skills)
+        }
+        Err(e) => {
+            if let Ok(Some(stale)) = read_cache_stale(&cache_key) {
+                return Ok(stale);
+            }
+            Err(ClawHubError::Network(e))
+        }
+    }
 }
 
 // ---------- Response parsing ----------
@@ -223,71 +249,6 @@ fn parse_clawhub_json_fallback(payload: &str) -> Vec<MarketplaceSkill> {
             source: "clawhub".to_string(),
         })
         .collect()
-}
-
-// ---------- SQLite cache ----------
-
-fn cache_db_path() -> PathBuf {
-    let base = dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("skills-app");
-    let _ = fs::create_dir_all(&base);
-    base.join("marketplace.db")
-}
-
-fn open_cache() -> Result<Connection, ClawHubError> {
-    let conn = Connection::open(cache_db_path())?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS marketplace_cache (
-            cache_key TEXT PRIMARY KEY,
-            payload TEXT NOT NULL,
-            expires_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-    Ok(conn)
-}
-
-fn now_epoch() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock drift")
-        .as_secs() as i64
-}
-
-fn read_cache(key: &str) -> Result<Option<Vec<MarketplaceSkill>>, ClawHubError> {
-    let conn = open_cache()?;
-    let mut stmt =
-        conn.prepare("SELECT payload, expires_at FROM marketplace_cache WHERE cache_key = ?1")?;
-    let mut rows = stmt.query(params![key])?;
-    let Some(row) = rows.next()? else {
-        return Ok(None);
-    };
-    let payload: String = row.get(0)?;
-    let expires_at: i64 = row.get(1)?;
-    if expires_at < now_epoch() {
-        return Ok(None);
-    }
-    let parsed: Vec<MarketplaceSkill> = serde_json::from_str(&payload).unwrap_or_default();
-    Ok(Some(parsed))
-}
-
-fn write_cache(
-    key: &str,
-    skills: &[MarketplaceSkill],
-    ttl_seconds: i64,
-) -> Result<(), ClawHubError> {
-    let conn = open_cache()?;
-    let payload = serde_json::to_string(skills).unwrap_or_default();
-    conn.execute(
-        "INSERT INTO marketplace_cache(cache_key, payload, expires_at)
-         VALUES (?1, ?2, ?3)
-         ON CONFLICT(cache_key) DO UPDATE SET
-           payload=excluded.payload,
-           expires_at=excluded.expires_at",
-        params![key, payload, now_epoch() + ttl_seconds],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]

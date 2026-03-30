@@ -5,8 +5,6 @@ pub enum SkillFormat {
     #[default]
     #[serde(rename = "skill-md")]
     SkillMd,
-    #[serde(rename = "gemini-extension")]
-    GeminiExtension,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -20,6 +18,13 @@ pub struct AgentHooks {
 pub struct ExtraConfig {
     pub template: Option<String>,
     pub target_file: Option<String>,
+}
+
+/// A directory that an agent can read skills from, beyond its own global_paths.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReadablePath {
+    pub path: String,
+    pub source_agent: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -37,9 +42,13 @@ pub struct AgentConfig {
     #[serde(default)]
     pub hooks: Option<AgentHooks>,
     #[serde(default)]
+    pub additional_readable_paths: Vec<ReadablePath>,
+    #[serde(default)]
     pub cli_command: Option<String>,
     #[serde(default)]
     pub install_command: Option<String>,
+    #[serde(default)]
+    pub install_command_windows: Option<String>,
     #[serde(default)]
     pub install_docs_url: Option<String>,
     #[serde(default)]

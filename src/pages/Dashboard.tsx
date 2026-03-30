@@ -386,6 +386,7 @@ function InstallGuideModal({
     name: string;
     cli_command: string | null;
     install_command: string | null;
+    install_command_windows: string | null;
     install_docs_url: string | null;
     install_source_label: string | null;
     global_paths: string[];
@@ -401,7 +402,11 @@ function InstallGuideModal({
   }, [agent]);
 
   if (!agent) return null;
-  const installCommand = agent.install_command?.trim();
+  const isWindows = navigator.userAgent.includes("Windows");
+  const installCommand = (isWindows
+    ? agent.install_command_windows ?? agent.install_command
+    : agent.install_command
+  )?.trim();
 
   function formatInstallSourceLabel(label: string | null): string {
     switch (label) {

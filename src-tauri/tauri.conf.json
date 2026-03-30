@@ -26,11 +26,17 @@
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "id": "main-tray",
+      "iconPath": "icons/icon-rounded.png",
+      "iconAsTemplate": false,
+      "tooltip": "AgentSkills"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg", "deb", "appimage", "nsis"],
     "resources": [
       "agents/*"
     ],

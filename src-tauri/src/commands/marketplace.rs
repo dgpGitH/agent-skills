@@ -15,27 +15,39 @@ fn load_detected_agents() -> Result<Vec<crate::models::agent::AgentConfig>, Stri
 }
 
 #[tauri::command]
-pub fn fetch_skillssh(sort: String, page: u32) -> Result<Vec<MarketplaceSkill>, String> {
-    fetch_skillssh_impl(&sort, page).map_err(|e| e.to_string())
+pub async fn fetch_skillssh(sort: String, page: u32) -> Result<Vec<MarketplaceSkill>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fetch_skillssh_impl(&sort, page).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn fetch_clawhub(
+pub async fn fetch_clawhub(
     endpoint: String,
     params: HashMap<String, String>,
 ) -> Result<Vec<MarketplaceSkill>, String> {
-    fetch_clawhub_impl(&endpoint, &params).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        fetch_clawhub_impl(&endpoint, &params).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn search_marketplace(query: String, source: String) -> Result<Vec<MarketplaceSkill>, String> {
-    match source.as_str() {
-        "skills.sh" => search_skillssh(&query).map_err(|e| e.to_string()),
-        "clawhub" => {
-            crate::marketplace::clawhub::search_clawhub(&query).map_err(|e| e.to_string())
+pub async fn search_marketplace(query: String, source: String) -> Result<Vec<MarketplaceSkill>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        match source.as_str() {
+            "skills.sh" => search_skillssh(&query).map_err(|e| e.to_string()),
+            "clawhub" => {
+                crate::marketplace::clawhub::search_clawhub(&query).map_err(|e| e.to_string())
+            }
+            _ => Ok(Vec::new()),
         }
-        _ => Ok(Vec::new()),
-    }
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
 }
 
 /// Install a marketplace skill, following the SkillDeck strategy:
@@ -75,49 +87,53 @@ fn install_from_marketplace_sync(
             .expect("clock drift")
             .as_millis()
     ));
-    git2::Repository::clone(&repo_url, &temp_dir)
-        .map_err(|e| format!("git clone failed: {e}"))?;
+    {
+        let mut proxy = git2::ProxyOptions::new();
+        proxy.auto();
+        let mut fetch = git2::FetchOptions::new();
+        fetch.proxy_options(proxy);
+        git2::build::RepoBuilder::new()
+            .fetch_options(fetch)
+            .clone(&repo_url, &temp_dir)
+            .map_err(|e| format!("git clone failed: {e}"))?;
+    }
 
     // 2. Scan the cloned repo for SKILL.md files and find the matching skill
     let skill_dir = find_skill_in_repo(&temp_dir, &skill.name);
 
     let result = match skill_dir {
         Some(dir) => {
-            // 3. Install from the discovered path to each agent
-            let mut errors: Vec<String> = Vec::new();
-            for agent_slug in &target_agents {
-                if let Err(e) = install_skill_from_path(&dir, agent_slug, &agents) {
-                    errors.push(format!("{agent_slug}: {e}"));
-                }
-            }
-            if errors.len() == target_agents.len() {
-                // All failed
-                Err(errors.join("; "))
-            } else {
-                Ok(())
-            }
+            // 3. Install from the discovered path to all target agents
+            install_skill_from_path(&dir, &target_agents, &agents)
+                .map_err(|e| e.to_string())
         }
         None => {
             // Fallback: no matching skill found via scan, try repo root
             // This handles single-skill repos where the repo IS the skill
-            let mut errors: Vec<String> = Vec::new();
-            for agent_slug in &target_agents {
-                if let Err(e) = install_skill_from_path(&temp_dir, agent_slug, &agents) {
-                    errors.push(format!("{agent_slug}: {e}"));
-                }
-            }
-            if errors.len() == target_agents.len() {
-                Err(errors.join("; "))
-            } else {
-                Ok(())
-            }
+            install_skill_from_path(&temp_dir, &target_agents, &agents)
+                .map_err(|e| e.to_string())
         }
     };
 
     // 4. Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    result
+    // 5. Record provenance so the scanner can restore the source later
+    if let Ok(ref canonical_dir) = result {
+        let skill_id = canonical_dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown");
+        crate::installer::install::write_provenance(
+            skill_id,
+            &skill.source,
+            Some(repo_url.as_str()),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    result.map(|_| ())
 }
 
 /// Walk the cloned repo directory, find all SKILL.md files, and match the target skill.

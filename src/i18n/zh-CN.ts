@@ -84,9 +84,11 @@ const zhCN = {
     skillMetadata: "技能元数据",
     // Agent Assignment
     agentsLabel: "Agent ({{installed}}/{{total}})",
-    via: "来自 {{name}}",
+    via: "来源：{{name}}",
+    sharedDirectory: "共享目录",
     symlink: "符号链接",
     install: "安装",
+    sync: "同步",
     uninstall: "卸载",
     // Actions
     actions: "操作",
@@ -118,6 +120,8 @@ const zhCN = {
     installed: "已安装",
     installAll: "全部安装",
     installing: "安装中...",
+    uninstalling: "卸载中...",
+    syncing: "同步中...",
     install: "安装",
     agentsLabel: "Agent ({{installed}}/{{total}})",
     // Package Info
@@ -140,6 +144,7 @@ const zhCN = {
     sortDownloads: "下载量",
     sortStars: "星标",
     revealInFinder: "在 Finder 中显示",
+    sync: "同步",
     installFailed: "无法安装技能。",
     uninstallFailed: "无法卸载技能。",
   },

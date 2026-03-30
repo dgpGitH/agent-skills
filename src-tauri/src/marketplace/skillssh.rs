@@ -1,13 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use regex::Regex;
 use reqwest::blocking::Client;
-use rusqlite::{params, Connection};
 use serde::Deserialize;
 use thiserror::Error;
 
+use super::cache::{read_cache, read_cache_stale, write_cache};
 use super::MarketplaceSkill;
 
 #[derive(Debug, Error)]
@@ -37,7 +33,7 @@ struct RscSkill {
 /// Fetch leaderboard from skills.sh by scraping the RSC payload in the HTML
 pub fn fetch_skillssh(sort: &str, page: u32) -> Result<Vec<MarketplaceSkill>, SkillsShError> {
     let cache_key = format!("skills.sh:{sort}:{page}");
-    if let Some(cached) = read_cache(&cache_key)? {
+    if let Ok(Some(cached)) = read_cache(&cache_key) {
         return Ok(cached);
     }
 
@@ -46,22 +42,33 @@ pub fn fetch_skillssh(sort: &str, page: u32) -> Result<Vec<MarketplaceSkill>, Sk
         "hot" => format!("https://skills.sh/hot?page={page}"),
         _ => format!("https://skills.sh/?page={page}"),
     };
-    let html = Client::builder()
+    let result = Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
         .build()?
         .get(&url)
-        .send()?
-        .text()?;
+        .send()
+        .and_then(|r| r.text());
 
-    let skills = parse_leaderboard_html(&html);
-    write_cache(&cache_key, &skills, 5 * 60)?;
-    Ok(skills)
+    match result {
+        Ok(html) => {
+            let skills = parse_leaderboard_html(&html);
+            let _ = write_cache(&cache_key, &skills, 5 * 60);
+            Ok(skills)
+        }
+        Err(e) => {
+            // Serve stale cache on network error
+            if let Ok(Some(stale)) = read_cache_stale(&cache_key) {
+                return Ok(stale);
+            }
+            Err(SkillsShError::Network(e))
+        }
+    }
 }
 
 /// Search skills.sh using the JSON search API
 pub fn search_skillssh(query: &str) -> Result<Vec<MarketplaceSkill>, SkillsShError> {
     let cache_key = format!("skills.sh:search:{query}");
-    if let Some(cached) = read_cache(&cache_key)? {
+    if let Ok(Some(cached)) = read_cache(&cache_key) {
         return Ok(cached);
     }
 
@@ -69,17 +76,27 @@ pub fn search_skillssh(query: &str) -> Result<Vec<MarketplaceSkill>, SkillsShErr
         "https://skills.sh/api/search?q={}&limit=50",
         urlencoding::encode(query)
     );
-    let resp = Client::builder()
+    let result = Client::builder()
         .user_agent("Mozilla/5.0")
         .build()?
         .get(&url)
         .header("Accept", "application/json")
-        .send()?
-        .text()?;
+        .send()
+        .and_then(|r| r.text());
 
-    let skills = parse_search_response(&resp);
-    write_cache(&cache_key, &skills, 5 * 60)?;
-    Ok(skills)
+    match result {
+        Ok(resp) => {
+            let skills = parse_search_response(&resp);
+            let _ = write_cache(&cache_key, &skills, 5 * 60);
+            Ok(skills)
+        }
+        Err(e) => {
+            if let Ok(Some(stale)) = read_cache_stale(&cache_key) {
+                return Ok(stale);
+            }
+            Err(SkillsShError::Network(e))
+        }
+    }
 }
 
 /// Parse skills.sh search API JSON response
@@ -193,71 +210,6 @@ fn try_decode_rsc_skill(json_str: &str) -> Option<MarketplaceSkill> {
         installs: rsc.installs,
         source: "skills.sh".to_string(),
     })
-}
-
-// ---------- SQLite cache ----------
-
-fn cache_db_path() -> PathBuf {
-    let base = dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("skills-app");
-    let _ = fs::create_dir_all(&base);
-    base.join("marketplace.db")
-}
-
-fn open_cache() -> Result<Connection, SkillsShError> {
-    let conn = Connection::open(cache_db_path())?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS marketplace_cache (
-            cache_key TEXT PRIMARY KEY,
-            payload TEXT NOT NULL,
-            expires_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-    Ok(conn)
-}
-
-fn now_epoch() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock drift")
-        .as_secs() as i64
-}
-
-fn read_cache(key: &str) -> Result<Option<Vec<MarketplaceSkill>>, SkillsShError> {
-    let conn = open_cache()?;
-    let mut stmt =
-        conn.prepare("SELECT payload, expires_at FROM marketplace_cache WHERE cache_key = ?1")?;
-    let mut rows = stmt.query(params![key])?;
-    let Some(row) = rows.next()? else {
-        return Ok(None);
-    };
-    let payload: String = row.get(0)?;
-    let expires_at: i64 = row.get(1)?;
-    if expires_at < now_epoch() {
-        return Ok(None);
-    }
-    let parsed: Vec<MarketplaceSkill> = serde_json::from_str(&payload).unwrap_or_default();
-    Ok(Some(parsed))
-}
-
-fn write_cache(
-    key: &str,
-    skills: &[MarketplaceSkill],
-    ttl_seconds: i64,
-) -> Result<(), SkillsShError> {
-    let conn = open_cache()?;
-    let payload = serde_json::to_string(skills).unwrap_or_default();
-    conn.execute(
-        "INSERT INTO marketplace_cache(cache_key, payload, expires_at)
-         VALUES (?1, ?2, ?3)
-         ON CONFLICT(cache_key) DO UPDATE SET
-           payload=excluded.payload,
-           expires_at=excluded.expires_at",
-        params![key, payload, now_epoch() + ttl_seconds],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]

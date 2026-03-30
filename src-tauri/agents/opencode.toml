@@ -1,9 +1,18 @@
 slug = "opencode"
 name = "OpenCode"
 enabled = true
-global_paths = ["~/.opencode/skills"]
+global_paths = ["~/.config/opencode/skills"]
 skill_format = "skill-md"
 cli_command = "opencode"
 install_command = "curl -fsSL https://opencode.ai/install | bash"
-install_docs_url = "https://opencode.ai/docs/cli/"
-install_source_label = "official-readme"
+install_command_windows = "npm install -g opencode-ai"
+install_docs_url = "https://opencode.ai/docs/"
+install_source_label = "official-docs"
+
+[[additional_readable_paths]]
+path = "~/.claude/skills"
+source_agent = "claude-code"
+
+[[additional_readable_paths]]
+path = "~/.agents/skills"
+source_agent = "shared"

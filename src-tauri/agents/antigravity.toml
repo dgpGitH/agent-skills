@@ -1,9 +1,14 @@
 slug = "antigravity"
 name = "Antigravity"
 enabled = true
-global_paths = ["~/.antigravity/skills"]
+global_paths = ["~/.gemini/antigravity/skills"]
 skill_format = "skill-md"
 cli_command = "antigravity"
 install_command = "brew install --cask antigravity"
+install_command_windows = "winget install Google.Antigravity"
 install_docs_url = "https://formulae.brew.sh/cask/antigravity"
 install_source_label = "homebrew-cask"
+
+[[additional_readable_paths]]
+path = "~/.agents/skills"
+source_agent = "shared"

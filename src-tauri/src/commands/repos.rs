@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use git2::Repository;
+use git2::{build::RepoBuilder, FetchOptions, ProxyOptions, Repository};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -22,6 +22,14 @@ use crate::scanner::engine::scan_all_skills;
 pub struct RepoProgress {
     pub stage: String,
     pub detail: Option<String>,
+}
+
+/// Combined result for add_skill_repo / add_local_dir so the frontend gets
+/// both the repo metadata and the full skill list in a single IPC round-trip.
+#[derive(Clone, Serialize)]
+pub struct AddRepoResult {
+    pub repo: SkillRepo,
+    pub skills: Vec<Skill>,
 }
 
 /// Directory where repos are cloned
@@ -162,7 +170,7 @@ fn resolve_repo_path(repo_id_param: &str) -> Result<PathBuf, String> {
 // ─── Tauri Commands ───
 
 #[tauri::command]
-pub async fn add_skill_repo(app: AppHandle, repo_url: String) -> Result<SkillRepo, String> {
+pub async fn add_skill_repo(app: AppHandle, repo_url: String) -> Result<AddRepoResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         add_skill_repo_sync(&app, repo_url)
     })
@@ -177,13 +185,30 @@ fn emit_progress(app: &AppHandle, stage: &str, detail: Option<&str>) {
     });
 }
 
-fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<SkillRepo, String> {
+/// Build FetchOptions with automatic proxy detection (git config, env vars, system proxy).
+fn proxy_fetch_options<'a>() -> FetchOptions<'a> {
+    let mut proxy = ProxyOptions::new();
+    proxy.auto();
+    let mut opts = FetchOptions::new();
+    opts.proxy_options(proxy);
+    opts
+}
+
+fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<AddRepoResult, String> {
     let id = repo_id(&repo_url);
     let local_path = repos_dir().join(&id);
 
-    // Don't re-clone if already exists
+    // Don't re-clone if already exists AND registered in config
     if local_path.exists() {
-        return Err(format!("Repository already added: {}", repo_url));
+        let settings = read_settings().unwrap_or_default();
+        let in_config = settings.repos.as_ref().is_some_and(|repos| {
+            repos.iter().any(|r| r.repo_url.as_deref() == Some(&repo_url))
+        });
+        if in_config {
+            return Err(format!("Repository already added: {}", repo_url));
+        }
+        // Stale directory from a previous interrupted clone — clean up
+        let _ = fs::remove_dir_all(&local_path);
     }
 
     // Ensure parent directory exists; git2::clone will create the target dir
@@ -193,18 +218,25 @@ fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<SkillRepo, S
 
     emit_progress(app, "cloning", Some(&repo_url));
 
-    // Clone the repository
-    Repository::clone(&repo_url, &local_path).map_err(|e| {
-        // Clean up on failure
-        let _ = fs::remove_dir_all(&local_path);
-        format!("Failed to clone repository: {}", e)
-    })?;
+    // Clone the repository (with proxy auto-detection)
+    RepoBuilder::new()
+        .fetch_options(proxy_fetch_options())
+        .clone(&repo_url, &local_path)
+        .map_err(|e| {
+            // Clean up on failure
+            let _ = fs::remove_dir_all(&local_path);
+            format!("Failed to clone repository: {}", e)
+        })?;
 
     emit_progress(app, "scanning", None);
 
     let now = Utc::now().to_rfc3339();
     let mut repo = build_skill_repo(&repo_url, &local_path, &id);
     repo.last_synced = Some(now.clone());
+
+    // Scan skills while we're at it — avoids a second IPC round-trip
+    let skills = list_repo_skills_sync(id.clone()).unwrap_or_default();
+    repo.skill_count = skills.len();
 
     emit_progress(app, "saving", None);
 
@@ -220,7 +252,7 @@ fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<SkillRepo, S
 
     emit_progress(app, "done", None);
 
-    Ok(repo)
+    Ok(AddRepoResult { repo, skills })
 }
 
 #[tauri::command]
@@ -315,10 +347,10 @@ fn sync_skill_repo_sync(app: &AppHandle, repo_id_param: String) -> Result<SkillR
     // Open and pull
     let repo = Repository::open(&local_path).map_err(|e| e.to_string())?;
 
-    // Fetch origin
+    // Fetch origin (with proxy auto-detection)
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
     remote
-        .fetch(&["HEAD"], None, None)
+        .fetch(&["HEAD"], Some(&mut proxy_fetch_options()), None)
         .map_err(|e| e.to_string())?;
 
     emit_progress(app, "merging", None);
@@ -454,15 +486,13 @@ fn install_repo_skill_sync(
     }
 
     let agents = load_detected_agents()?;
-    for agent_slug in &target_agents {
-        install_skill_from_path(&skill_path, agent_slug, &agents).map_err(|e| e.to_string())?;
-    }
+    install_skill_from_path(&skill_path, &target_agents, &agents).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn add_local_dir(path: String) -> Result<SkillRepo, String> {
+pub async fn add_local_dir(path: String) -> Result<AddRepoResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         add_local_dir_sync(path)
     })
@@ -470,7 +500,7 @@ pub async fn add_local_dir(path: String) -> Result<SkillRepo, String> {
     .map_err(|e| format!("task failed: {e}"))?
 }
 
-fn add_local_dir_sync(path: String) -> Result<SkillRepo, String> {
+fn add_local_dir_sync(path: String) -> Result<AddRepoResult, String> {
     let dir = Path::new(&path);
     if !dir.is_dir() {
         return Err("Path is not a directory".to_string());
@@ -486,32 +516,35 @@ fn add_local_dir_sync(path: String) -> Result<SkillRepo, String> {
 
     let id = local_dir_id(&path);
     let manifest = parse_manifest(dir);
-    let sr = skills_root(dir, &manifest);
     let name = manifest.name.unwrap_or_else(|| {
         dir.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "Local".to_string())
     });
 
+    let repos = settings.repos.get_or_insert_with(Vec::new);
+    repos.push(RepoEntry {
+        repo_url: None,
+        local_path: Some(path.clone()),
+        last_synced: None,
+    });
+    write_settings(settings).map_err(|e| e.to_string())?;
+
+    // Scan skills up front — avoids a second IPC round-trip
+    // (must happen after settings write so resolve_repo_path can find the local dir)
+    let skills = list_repo_skills_sync(id.clone()).unwrap_or_default();
+
     let repo = SkillRepo {
         id: id.clone(),
         name,
         description: manifest.description,
         repo_url: path.clone(),
-        local_path: path.clone(),
+        local_path: path,
         last_synced: None,
-        skill_count: count_skills(&sr),
+        skill_count: skills.len(),
     };
 
-    let repos = settings.repos.get_or_insert_with(Vec::new);
-    repos.push(RepoEntry {
-        repo_url: None,
-        local_path: Some(path),
-        last_synced: None,
-    });
-    write_settings(settings).map_err(|e| e.to_string())?;
-
-    Ok(repo)
+    Ok(AddRepoResult { repo, skills })
 }
 
 #[cfg(test)]

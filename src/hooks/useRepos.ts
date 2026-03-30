@@ -11,6 +11,11 @@ export interface SkillRepo {
   skill_count: number;
 }
 
+export interface AddRepoResult {
+  repo: SkillRepo;
+  skills: import("@/hooks/useSkills").Skill[];
+}
+
 export function useRepos() {
   return useQuery<SkillRepo[]>({
     queryKey: ["repos"],
@@ -23,7 +28,7 @@ export function useAddRepo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (repoUrl: string) =>
-      invoke<SkillRepo>("add_skill_repo", { repoUrl }),
+      invoke<AddRepoResult>("add_skill_repo", { repoUrl }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["repos"] });
     },
@@ -34,7 +39,7 @@ export function useAddLocalDir() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (path: string) =>
-      invoke<SkillRepo>("add_local_dir", { path }),
+      invoke<AddRepoResult>("add_local_dir", { path }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["repos"] });
     },

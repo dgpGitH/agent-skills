@@ -6,7 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { useAddRepo, useAddLocalDir, type SkillRepo } from "@/hooks/useRepos";
+import { useAddRepo, useAddLocalDir, useRemoveRepo, type SkillRepo, type AddRepoResult } from "@/hooks/useRepos";
 import { useAgents, type AgentConfig } from "@/hooks/useAgents";
 import { type Skill } from "@/hooks/useSkills";
 import { getAgentIcon } from "@/lib/agentIcons";
@@ -15,6 +15,7 @@ type WizardStep = "source" | "indexing" | "skills" | "agents" | "installing";
 
 interface ImportWizardProps {
   mode: "git" | "local";
+  initialLocalPath?: string | null;
   onClose: () => void;
 }
 
@@ -28,7 +29,7 @@ const INDEX_STAGE_KEYS: Record<string, string> = {
   saving: "repos.savingConfig",
 };
 
-export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
+export default function ImportWizard({ mode, initialLocalPath, onClose }: ImportWizardProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -39,11 +40,13 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
 
   // Source step
   const [url, setUrl] = useState("");
-  const [localPath, setLocalPath] = useState<string | null>(null);
+  const [localPath, setLocalPath] = useState<string | null>(initialLocalPath ?? null);
 
   // Indexing step
   const addRepo = useAddRepo();
   const addLocalDir = useAddLocalDir();
+  const removeRepo = useRemoveRepo();
+  const installedRef = useRef(false);
   const [indexStage, setIndexStage] = useState<string | null>(null);
   const [repo, setRepo] = useState<SkillRepo | null>(null);
 
@@ -62,6 +65,14 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
   const [currentSkill, setCurrentSkill] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Clean up the repo if the wizard is closed without installing any skills
+  const handleClose = useCallback(() => {
+    if (repo && !installedRef.current) {
+      removeRepo.mutate(repo.id);
+    }
+    onClose();
+  }, [repo, onClose, removeRepo]);
+
   // Focus panel on mount
   useEffect(() => {
     panelRef.current?.focus();
@@ -70,11 +81,11 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
   // Escape to close (when not busy)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) onClose();
+      if (e.key === "Escape" && !busy) handleClose();
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, busy]);
+  }, [handleClose, busy]);
 
   // Listen for backend progress events during indexing
   useEffect(() => {
@@ -87,10 +98,10 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
     return () => { unlisten?.(); };
   }, []);
 
-  // Auto-pick folder for local mode on mount
+  // Auto-start indexing when opened with a pre-selected local path
   useEffect(() => {
-    if (mode === "local" && step === "source" && !localPath) {
-      pickFolder();
+    if (mode === "local" && initialLocalPath && step === "source") {
+      startIndexing();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -101,7 +112,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
       setLocalPath(selected);
     } else {
       // User cancelled folder picker
-      onClose();
+      handleClose();
     }
   }
 
@@ -112,21 +123,15 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
     setError(null);
 
     try {
-      let result: SkillRepo;
+      let result: AddRepoResult;
       if (mode === "git") {
         result = await addRepo.mutateAsync(url.trim());
       } else {
         result = await addLocalDir.mutateAsync(localPath!);
       }
-      setRepo(result);
-
-      // Fetch skills from the newly added repo
-      setIndexStage("scanning");
-      const repoSkills = await invoke<Skill[]>("list_repo_skills", {
-        repoIdParam: result.id,
-      });
-      setSkills(repoSkills);
-      setSelectedSkillIds(new Set(repoSkills.map((s) => s.id)));
+      setRepo(result.repo);
+      setSkills(result.skills);
+      setSelectedSkillIds(new Set(result.skills.map((s) => s.id)));
 
       // Auto-select all detected agents
       const detected = allAgents?.filter((a) => a.detected) ?? [];
@@ -169,6 +174,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
 
     setInstallDone(total);
     setCurrentSkill(null);
+    installedRef.current = true;
 
     // Invalidate caches
     await queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -217,7 +223,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 dark:bg-black/40 animate-backdrop-in"
       role="presentation"
-      onClick={busy ? undefined : onClose}
+      onClick={busy ? undefined : handleClose}
     >
       <div
         ref={panelRef}
@@ -253,7 +259,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
             </div>
             <button
               className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={busy}
             >
               <X className="size-4" />
@@ -285,7 +291,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
               <p className="text-xs text-destructive">{error}</p>
             )}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" type="button" onClick={onClose}>
+              <Button variant="outline" size="sm" type="button" onClick={handleClose}>
                 {t("repos.cancel")}
               </Button>
               <Button size="sm" type="submit" disabled={!url.trim()}>
@@ -319,7 +325,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
               </>
             ) : (
               <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={onClose}>
+                <Button variant="outline" size="sm" onClick={handleClose}>
                   {t("repos.cancel")}
                 </Button>
                 <Button size="sm" onClick={pickFolder}>
@@ -351,7 +357,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
                   variant="outline"
                   size="sm"
                   className="mt-4"
-                  onClick={onClose}
+                  onClick={handleClose}
                 >
                   {t("repos.cancel")}
                 </Button>
@@ -383,7 +389,7 @@ export default function ImportWizard({ mode, onClose }: ImportWizardProps) {
                   ))}
                 </div>
                 <div className="flex justify-end gap-2 pt-1">
-                  <Button variant="outline" size="sm" onClick={onClose}>
+                  <Button variant="outline" size="sm" onClick={handleClose}>
                     {t("repos.cancel")}
                   </Button>
                   <Button
