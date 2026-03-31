@@ -523,7 +523,23 @@ fn install_repo_skill_sync(
         .ok_or_else(|| format!("Skill '{}' not found in repository", skill_id))?;
 
     let agents = load_detected_agents()?;
-    install_skill_from_path(&skill_path, &target_agents, &agents).map_err(|e| e.to_string())?;
+    let canonical = install_skill_from_path(&skill_path, &target_agents, &agents)
+        .map_err(|e| e.to_string())?;
+
+    // Record provenance so update_skill can find the upstream source later
+    let installed_id = canonical
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(&skill_id);
+    let repo_url = resolve_repo_url(&repo_id_param);
+    let source_label = if repo_url.is_some() { "git" } else { "local" };
+    crate::installer::install::write_provenance(
+        installed_id,
+        source_label,
+        repo_url.as_deref(),
+        Some(&skill_id),
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }

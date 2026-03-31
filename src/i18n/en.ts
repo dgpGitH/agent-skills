@@ -97,6 +97,11 @@ const en = {
     updating: "Updating...",
     updateFailed: "Could not update skill from source.",
     updateSuccess: "Skill updated successfully.",
+    updateAll: "Update All",
+    updateAllProgress: "Updating {{done}}/{{total}}...",
+    updateAllDone: "Updated {{updated}} skills.",
+    updateAllPartial: "Updated {{updated}}, failed {{failed}}.",
+    updateAllFailed: "All skill updates failed.",
     syncTo: "Sync to {{names}}",
     // Skill Content
     skillContent: "Skill Content",

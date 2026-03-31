@@ -90,3 +90,19 @@ pub struct SkillSummary {
     pub description: Option<String>,
     pub installed_agents: Vec<String>,
 }
+
+/// Progress event emitted during batch skill updates.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateProgress {
+    pub done: usize,
+    pub total: usize,
+    pub current_skill: String,
+}
+
+/// Result of a batch update operation.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct UpdateAllResult {
+    pub updated: Vec<String>,
+    pub failed: Vec<(String, String)>,
+    pub skipped: usize,
+}

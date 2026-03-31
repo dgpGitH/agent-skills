@@ -97,6 +97,11 @@ const zhCN = {
     updating: "更新中...",
     updateFailed: "无法从源更新技能。",
     updateSuccess: "技能更新成功。",
+    updateAll: "全部更新",
+    updateAllProgress: "更新中 {{done}}/{{total}}...",
+    updateAllDone: "已更新 {{updated}} 个技能。",
+    updateAllPartial: "已更新 {{updated}} 个，失败 {{failed}} 个。",
+    updateAllFailed: "所有技能更新均失败。",
     syncTo: "同步至 {{names}}",
     // Skill Content
     skillContent: "技能内容",
