@@ -9,6 +9,63 @@ use crate::installer::install::read_provenance;
 use crate::models::skill::{Skill, SkillInstallation, SkillScope, SkillSource};
 use crate::parser::skillmd::parse_skill_md_file;
 
+/// A directory containing a SKILL.md, discovered by recursive scanning.
+#[derive(Debug, Clone)]
+pub struct SkillCandidate {
+    /// The directory containing SKILL.md
+    pub dir: PathBuf,
+    /// The `name` field from SKILL.md frontmatter, if present
+    pub parsed_name: Option<String>,
+}
+
+/// Recursively walk `root` and collect all directories that contain a SKILL.md file.
+/// Also checks `root` itself. Skips `.git` directories.
+pub fn discover_skill_dirs(root: &Path) -> Vec<SkillCandidate> {
+    let mut candidates = Vec::new();
+
+    fn walk(dir: &Path, candidates: &mut Vec<SkillCandidate>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if name == ".git" {
+                continue;
+            }
+            if path.is_dir() {
+                let skill_md = path.join("SKILL.md");
+                if skill_md.is_file() {
+                    let parsed_name = parse_skill_md_file(&skill_md)
+                        .ok()
+                        .and_then(|p| p.name);
+                    candidates.push(SkillCandidate {
+                        dir: path.clone(),
+                        parsed_name,
+                    });
+                }
+                walk(&path, candidates);
+            }
+        }
+    }
+
+    walk(root, &mut candidates);
+
+    // Also check root itself
+    let root_skill_md = root.join("SKILL.md");
+    if root_skill_md.is_file() {
+        let parsed_name = parse_skill_md_file(&root_skill_md)
+            .ok()
+            .and_then(|p| p.name);
+        candidates.push(SkillCandidate {
+            dir: root.to_path_buf(),
+            parsed_name,
+        });
+    }
+
+    candidates
+}
+
 #[derive(Debug, Error)]
 pub enum ScannerError {
     #[error("io error: {0}")]
@@ -456,5 +513,59 @@ mod tests {
             .unwrap();
         assert!(inherited.is_inherited);
         assert_eq!(inherited.inherited_from.as_deref(), Some("claude-code"));
+    }
+
+    #[test]
+    fn discover_skill_dirs_finds_deeply_nested_skills() {
+        // Simulates a repo like nextlevelbuilder/ui-ux-pro-max-skill
+        // where skills live under .claude/skills/<name>/SKILL.md
+        let root = test_dir("discover-deep");
+
+        // Create nested skill dirs like .claude/skills/foo/SKILL.md
+        let nested_dir = root.join(".claude").join("skills");
+        for name in &["ui-ux-pro-max", "design", "brand"] {
+            let skill_dir = nested_dir.join(name);
+            fs::create_dir_all(&skill_dir).expect("create skill dir");
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: test {name}\n---\nBody"),
+            )
+            .expect("write skill");
+        }
+
+        // Also create a top-level dir without SKILL.md (noise)
+        fs::create_dir_all(root.join("src")).expect("create src");
+        fs::write(root.join("README.md"), "hello").expect("write readme");
+
+        let candidates = discover_skill_dirs(&root);
+        assert_eq!(candidates.len(), 3);
+
+        let names: Vec<&str> = candidates
+            .iter()
+            .filter_map(|c| c.parsed_name.as_deref())
+            .collect();
+        assert!(names.contains(&"ui-ux-pro-max"));
+        assert!(names.contains(&"design"));
+        assert!(names.contains(&"brand"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discover_skill_dirs_finds_root_level_skill() {
+        // Single-skill repo where SKILL.md is at the root
+        let root = test_dir("discover-root");
+        fs::write(
+            root.join("SKILL.md"),
+            "---\nname: root-skill\ndescription: at root\n---\nBody",
+        )
+        .expect("write skill");
+
+        let candidates = discover_skill_dirs(&root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].parsed_name.as_deref(), Some("root-skill"));
+        assert_eq!(candidates[0].dir, root);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

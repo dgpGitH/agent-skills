@@ -5,9 +5,9 @@ use crate::installer::install::install_skill_from_path;
 use crate::marketplace::clawhub::fetch_clawhub as fetch_clawhub_impl;
 use crate::marketplace::skillssh::{fetch_skillssh as fetch_skillssh_impl, search_skillssh};
 use crate::marketplace::MarketplaceSkill;
-use crate::parser::skillmd::parse_skill_md_file;
 use crate::paths;
 use crate::registry::loader::{detect_agents, load_agent_configs};
+use crate::scanner::engine::discover_skill_dirs;
 
 fn load_detected_agents() -> Result<Vec<crate::models::agent::AgentConfig>, String> {
     let cfg = load_agent_configs(&paths::agents_dir()).map_err(|e| e.to_string())?;
@@ -144,88 +144,48 @@ fn install_from_marketplace_sync(
 /// 3. Directory name is a substring match (e.g. `skills/remotion/` for "remotion-best-practices")
 fn find_skill_in_repo(repo_dir: &std::path::Path, skill_name: &str) -> Option<PathBuf> {
     let skill_name_lower = skill_name.to_lowercase();
-
-    // Collect all directories containing a SKILL.md
-    let mut candidates: Vec<(PathBuf, Option<String>)> = Vec::new(); // (dir, parsed_name)
-
-    fn walk(dir: &std::path::Path, candidates: &mut Vec<(PathBuf, Option<String>)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            // Skip .git directory
-            if name == ".git" {
-                continue;
-            }
-            if path.is_dir() {
-                let skill_md = path.join("SKILL.md");
-                if skill_md.is_file() {
-                    // Parse frontmatter to get the skill name
-                    let parsed_name = parse_skill_md_file(&skill_md)
-                        .ok()
-                        .and_then(|p| p.name);
-                    candidates.push((path.clone(), parsed_name));
-                }
-                // Continue walking subdirectories
-                walk(&path, candidates);
-            }
-        }
-    }
-
-    walk(repo_dir, &mut candidates);
-
-    // Also check repo root for SKILL.md
-    let root_skill_md = repo_dir.join("SKILL.md");
-    if root_skill_md.is_file() {
-        let parsed_name = parse_skill_md_file(&root_skill_md)
-            .ok()
-            .and_then(|p| p.name);
-        candidates.push((repo_dir.to_path_buf(), parsed_name));
-    }
+    let candidates = discover_skill_dirs(repo_dir);
 
     // Match 1: exact directory name match
-    if let Some((dir, _)) = candidates.iter().find(|(dir, _)| {
-        dir.file_name()
+    if let Some(c) = candidates.iter().find(|c| {
+        c.dir.file_name()
             .and_then(|n| n.to_str())
             .map(|n| n.to_lowercase() == skill_name_lower)
             .unwrap_or(false)
     }) {
-        return Some(dir.clone());
+        return Some(c.dir.clone());
     }
 
     // Match 2: frontmatter `name` field matches
-    if let Some((dir, _)) = candidates.iter().find(|(_, parsed_name)| {
-        parsed_name
+    if let Some(c) = candidates.iter().find(|c| {
+        c.parsed_name
             .as_ref()
             .map(|n| n.to_lowercase() == skill_name_lower)
             .unwrap_or(false)
     }) {
-        return Some(dir.clone());
+        return Some(c.dir.clone());
     }
 
     // Match 3: directory name is contained in skill name
     //   e.g. dir "remotion" matches skill "remotion-best-practices"
     //   or skill name contains the dir name as a component
-    if let Some((dir, _)) = candidates.iter().find(|(dir, _)| {
-        dir.file_name()
+    if let Some(c) = candidates.iter().find(|c| {
+        c.dir.file_name()
             .and_then(|n| n.to_str())
             .map(|n| {
                 let n_lower = n.to_lowercase();
-                // dir name is a prefix of skill name (e.g. "remotion" → "remotion-best-practices")
                 skill_name_lower.starts_with(&format!("{n_lower}-"))
                     || skill_name_lower.starts_with(&format!("{n_lower}_"))
                     || skill_name_lower == n_lower
             })
             .unwrap_or(false)
     }) {
-        return Some(dir.clone());
+        return Some(c.dir.clone());
     }
 
     // Match 4: frontmatter name contains or is contained by skill name
-    if let Some((dir, _)) = candidates.iter().find(|(_, parsed_name)| {
-        parsed_name
+    if let Some(c) = candidates.iter().find(|c| {
+        c.parsed_name
             .as_ref()
             .map(|n| {
                 let n_lower = n.to_lowercase();
@@ -233,12 +193,12 @@ fn find_skill_in_repo(repo_dir: &std::path::Path, skill_name: &str) -> Option<Pa
             })
             .unwrap_or(false)
     }) {
-        return Some(dir.clone());
+        return Some(c.dir.clone());
     }
 
     // Single skill in the repo — just use it if there's exactly one candidate
     if candidates.len() == 1 {
-        return Some(candidates.into_iter().next().unwrap().0);
+        return Some(candidates.into_iter().next().unwrap().dir);
     }
 
     None

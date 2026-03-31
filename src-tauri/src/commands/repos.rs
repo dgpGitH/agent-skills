@@ -12,10 +12,11 @@ use crate::commands::settings::{read_settings, write_settings, RepoEntry};
 use crate::installer::install::install_skill_from_path;
 use crate::models::agent::AgentConfig;
 use crate::models::repo::SkillRepo;
-use crate::models::skill::{Skill, SkillSource};
+use crate::models::skill::{Skill, SkillScope, SkillSource};
+use crate::parser::skillmd::parse_skill_md_file;
 use crate::paths;
 use crate::registry::loader::{detect_agents, load_agent_configs};
-use crate::scanner::engine::scan_all_skills;
+use crate::scanner::engine::discover_skill_dirs;
 
 /// Progress event payload emitted during git clone / sync operations.
 #[derive(Clone, Serialize)]
@@ -198,14 +199,24 @@ fn add_skill_repo_sync(app: &AppHandle, repo_url: String) -> Result<AddRepoResul
     let id = repo_id(&repo_url);
     let local_path = repos_dir().join(&id);
 
-    // Don't re-clone if already exists AND registered in config
+    // If already cloned and registered, reuse the existing repo instead of re-cloning.
+    // This handles the case where a user uninstalls all skills from a repo and later
+    // wants to re-install from the same source.
     if local_path.exists() {
         let settings = read_settings().unwrap_or_default();
         let in_config = settings.repos.as_ref().is_some_and(|repos| {
             repos.iter().any(|r| r.repo_url.as_deref() == Some(&repo_url))
         });
         if in_config {
-            return Err(format!("Repository already added: {}", repo_url));
+            emit_progress(app, "scanning", None);
+            let mut repo = build_skill_repo(&repo_url, &local_path, &id);
+            let skills = list_repo_skills_sync(id.clone()).unwrap_or_default();
+            repo.skill_count = skills.len();
+            repo.last_synced = settings.repos.as_ref()
+                .and_then(|repos| repos.iter().find(|r| r.repo_url.as_deref() == Some(&repo_url)))
+                .and_then(|e| e.last_synced.clone());
+            emit_progress(app, "done", None);
+            return Ok(AddRepoResult { repo, skills });
         }
         // Stale directory from a previous interrupted clone — clean up
         let _ = fs::remove_dir_all(&local_path);
@@ -423,34 +434,53 @@ fn list_repo_skills_sync(repo_id_param: String) -> Result<Vec<Skill>, String> {
         return Err("Repository not found locally".to_string());
     }
 
-    let manifest = parse_manifest(&local_path);
-    let sr = skills_root(&local_path, &manifest);
-
-    let virtual_agent = AgentConfig {
-        slug: format!("repo-{}", repo_id_param),
-        name: "Repo".to_string(),
-        global_paths: vec![sr.to_string_lossy().to_string()],
-        detected: true,
-        ..Default::default()
-    };
-
-    let mut skills = scan_all_skills(&[virtual_agent]).map_err(|e| e.to_string())?;
-
-    // Override source with actual repo info instead of generic LocalPath
     let repo_url = resolve_repo_url(&repo_id_param);
-    for skill in &mut skills {
-        skill.source = Some(if let Some(ref url) = repo_url {
+    let candidates = discover_skill_dirs(&local_path);
+
+    let mut skills: Vec<Skill> = Vec::new();
+    for candidate in candidates {
+        // Parse full SKILL.md for description and metadata
+        let skill_md = candidate.dir.join("SKILL.md");
+        let parsed = match parse_skill_md_file(&skill_md) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        // A valid skill must have a description
+        if parsed.description.is_none() {
+            continue;
+        }
+
+        let dir_name = candidate.dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown-skill")
+            .to_string();
+        let skill_name = candidate.parsed_name.unwrap_or_else(|| dir_name.clone());
+
+        let source = if let Some(ref url) = repo_url {
             SkillSource::GitRepository {
                 repo_url: url.clone(),
-                skill_path: Some(skill.id.clone()),
+                skill_path: Some(dir_name.clone()),
             }
         } else {
             SkillSource::LocalPath {
                 path: local_path.to_string_lossy().to_string(),
             }
+        };
+
+        skills.push(Skill {
+            id: dir_name,
+            name: skill_name,
+            description: parsed.description,
+            canonical_path: candidate.dir.to_string_lossy().to_string(),
+            source: Some(source),
+            metadata: parsed.metadata,
+            scope: SkillScope::default(),
+            installations: Vec::new(),
         });
     }
 
+    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(skills)
 }
 
@@ -477,13 +507,20 @@ fn install_repo_skill_sync(
         return Err("Repository not found locally".to_string());
     }
 
-    let manifest = parse_manifest(&local_path);
-    let sr = skills_root(&local_path, &manifest);
-    let skill_path = sr.join(&skill_id);
-
-    if !skill_path.is_dir() || !skill_path.join("SKILL.md").is_file() {
-        return Err(format!("Skill '{}' not found in repository", skill_id));
-    }
+    // Find the skill by matching directory name against all discovered skill dirs.
+    // This handles repos where skills are nested arbitrarily deep (e.g. .claude/skills/<name>/).
+    let candidates = discover_skill_dirs(&local_path);
+    let skill_path = candidates
+        .iter()
+        .find(|c| {
+            c.dir
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|n| n == skill_id)
+                .unwrap_or(false)
+        })
+        .map(|c| c.dir.clone())
+        .ok_or_else(|| format!("Skill '{}' not found in repository", skill_id))?;
 
     let agents = load_detected_agents()?;
     install_skill_from_path(&skill_path, &target_agents, &agents).map_err(|e| e.to_string())?;
@@ -774,6 +811,63 @@ skills_dir = "custom"
         .unwrap();
         let repo = build_skill_repo("https://example.com/repo.git", &dir, "repo");
         assert_eq!(repo.name, "Custom Name");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Integration test: simulates the repo structure of
+    /// https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
+    /// where skills are nested under .claude/skills/<name>/SKILL.md
+    #[test]
+    fn list_repo_skills_finds_deeply_nested_claude_skills() {
+        let dir = test_dir("deep-claude-skills");
+
+        // Simulate the repo structure: .claude/skills/<name>/SKILL.md
+        let skills_base = dir.join(".claude").join("skills");
+        let skill_names = [
+            ("ui-ux-pro-max", "UI/UX Pro Max"),
+            ("design", "ckm:design"),
+            ("brand", "ckm:brand"),
+        ];
+        for (dir_name, frontmatter_name) in &skill_names {
+            let skill_dir = skills_base.join(dir_name);
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!(
+                    "---\nname: {frontmatter_name}\ndescription: test {dir_name}\n---\nBody"
+                ),
+            )
+            .unwrap();
+        }
+
+        // Add noise: files and dirs without SKILL.md
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("README.md"), "hello").unwrap();
+        fs::write(dir.join("skill.json"), "{}").unwrap();
+
+        // Use discover_skill_dirs directly (same path as list_repo_skills_sync)
+        let candidates = discover_skill_dirs(&dir);
+        assert_eq!(
+            candidates.len(),
+            3,
+            "should find 3 skills nested under .claude/skills/"
+        );
+
+        let found_names: std::collections::HashSet<String> = candidates
+            .iter()
+            .map(|c| {
+                c.dir
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert!(found_names.contains("ui-ux-pro-max"));
+        assert!(found_names.contains("design"));
+        assert!(found_names.contains("brand"));
+
         let _ = fs::remove_dir_all(&dir);
     }
 }
