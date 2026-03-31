@@ -68,6 +68,7 @@ pub fn run() {
             commands::skills::uninstall_skill,
             commands::skills::uninstall_skill_all,
             commands::skills::sync_skill,
+            commands::skills::update_skill,
             commands::skills::read_skill_content,
             commands::skills::write_skill_content,
             commands::skills::install_from_git,

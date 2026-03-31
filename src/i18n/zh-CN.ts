@@ -93,6 +93,10 @@ const zhCN = {
     // Actions
     actions: "操作",
     editSkillMd: "编辑 SKILL.md",
+    updateFromSource: "从源更新",
+    updating: "更新中...",
+    updateFailed: "无法从源更新技能。",
+    updateSuccess: "技能更新成功。",
     syncTo: "同步至 {{names}}",
     // Skill Content
     skillContent: "技能内容",

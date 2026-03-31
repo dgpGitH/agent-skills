@@ -93,6 +93,10 @@ const en = {
     // Actions
     actions: "Actions",
     editSkillMd: "Edit SKILL.md",
+    updateFromSource: "Update from Source",
+    updating: "Updating...",
+    updateFailed: "Could not update skill from source.",
+    updateSuccess: "Skill updated successfully.",
     syncTo: "Sync to {{names}}",
     // Skill Content
     skillContent: "Skill Content",

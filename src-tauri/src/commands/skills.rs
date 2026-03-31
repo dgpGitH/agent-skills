@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::installer::install::{install_skill_from_git, install_skill_from_git_with_source, install_skill_from_path};
+use crate::installer::install::{
+    install_skill_from_git, install_skill_from_git_with_source, install_skill_from_path,
+    read_provenance,
+};
 use crate::installer::uninstall::{
     uninstall_skill as uninstall_skill_impl,
     uninstall_skill_from_all as uninstall_skill_from_all_impl,
@@ -9,7 +12,7 @@ use crate::models::agent::AgentConfig;
 use crate::models::skill::{Skill, SkillSource};
 use crate::paths;
 use crate::registry::loader::{detect_agents, load_agent_configs};
-use crate::scanner::engine::scan_all_skills as scan_all_skills_impl;
+use crate::scanner::engine::{discover_skill_dirs, scan_all_skills as scan_all_skills_impl};
 
 fn load_detected_agents() -> Result<Vec<AgentConfig>, String> {
     let configs = load_agent_configs(&paths::agents_dir()).map_err(|e| e.to_string())?;
@@ -113,6 +116,153 @@ pub async fn sync_skill(skill_id: String, target_agents: Vec<String>) -> Result<
     })
     .await
     .map_err(|e| format!("task failed: {e}"))?
+}
+
+/// Update a skill from its upstream source (git repository).
+///
+/// Strategy:
+/// 1. Read provenance to find the repository URL and source label
+/// 2. If a local repo clone exists (git import), git pull it first
+/// 3. Clone/use the repo, locate the skill via discover_skill_dirs
+/// 4. Re-install to canonical + all currently installed agents
+/// 5. Clean up temp clone (marketplace/direct git only)
+#[tauri::command]
+pub async fn update_skill(skill_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || update_skill_sync(&skill_id))
+        .await
+        .map_err(|e| format!("task failed: {e}"))?
+}
+
+fn update_skill_sync(skill_id: &str) -> Result<(), String> {
+    let agents = load_detected_agents()?;
+
+    // 1. Read provenance to find upstream info
+    let provenance = read_provenance();
+    let entry = provenance
+        .get(skill_id)
+        .ok_or_else(|| format!("No provenance for skill '{skill_id}' — cannot determine source"))?;
+
+    let source_label = entry.get("source").and_then(|v| v.as_str()).unwrap_or("");
+    let repo_url = entry
+        .get("repository")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("Skill '{skill_id}' has no repository URL in provenance"))?;
+
+    // 2. Determine installed agents so we can re-install to the same set
+    let all_skills = scan_all_skills_impl(&agents).map_err(|e| e.to_string())?;
+    let target_agents: Vec<String> = all_skills
+        .iter()
+        .find(|s| s.id == skill_id)
+        .map(|s| s.installed_agents())
+        .unwrap_or_default();
+
+    if target_agents.is_empty() {
+        return Err(format!("Skill '{skill_id}' is not installed in any agent"));
+    }
+
+    // 3. Try to use existing local repo clone (git import path), otherwise temp clone
+    let repos_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".skills-app")
+        .join("repos");
+    let repo_name = repo_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("repo")
+        .trim_end_matches(".git");
+    let local_clone = repos_dir.join(repo_name);
+
+    let (source_dir, temp_dir) = if local_clone.exists() {
+        // Git import: pull latest
+        let repo = git2::Repository::open(&local_clone).map_err(|e| e.to_string())?;
+        let mut proxy = git2::ProxyOptions::new();
+        proxy.auto();
+        let mut fetch_opts = git2::FetchOptions::new();
+        fetch_opts.proxy_options(proxy);
+        let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
+        remote
+            .fetch(&["HEAD"], Some(&mut fetch_opts), None)
+            .map_err(|e| e.to_string())?;
+
+        // Fast-forward
+        if let Ok(fetch_head) = repo.find_reference("FETCH_HEAD") {
+            if let Ok(fc) = repo.reference_to_annotated_commit(&fetch_head) {
+                let (analysis, _) = repo.merge_analysis(&[&fc]).map_err(|e| e.to_string())?;
+                if analysis.is_fast_forward() || analysis.is_normal() {
+                    let target = repo.find_object(fc.id(), None).map_err(|e| e.to_string())?;
+                    repo.checkout_tree(&target, None).map_err(|e| e.to_string())?;
+                    let head = repo.head().map_err(|e| e.to_string())?;
+                    let head_name = head.name().unwrap_or("HEAD").to_string();
+                    repo.reference(&head_name, fc.id(), true, "skill update")
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        (local_clone.clone(), None)
+    } else {
+        // Marketplace / direct git: temp clone
+        let temp = std::env::temp_dir().join(format!(
+            "skills-app-update-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock drift")
+                .as_millis()
+        ));
+        let mut proxy = git2::ProxyOptions::new();
+        proxy.auto();
+        let mut fetch_opts = git2::FetchOptions::new();
+        fetch_opts.proxy_options(proxy);
+        git2::build::RepoBuilder::new()
+            .fetch_options(fetch_opts)
+            .clone(repo_url, &temp)
+            .map_err(|e| format!("git clone failed: {e}"))?;
+        (temp.clone(), Some(temp))
+    };
+
+    // 4. Discover the skill in the repo
+    let candidates = discover_skill_dirs(&source_dir);
+    let skill_dir = candidates
+        .iter()
+        .find(|c| {
+            c.dir
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|n| n == skill_id)
+                .unwrap_or(false)
+        })
+        .or_else(|| {
+            // Fallback: match by frontmatter name
+            candidates.iter().find(|c| {
+                c.parsed_name
+                    .as_ref()
+                    .map(|n| n == skill_id)
+                    .unwrap_or(false)
+            })
+        })
+        .map(|c| c.dir.clone())
+        .ok_or_else(|| format!("Skill '{skill_id}' not found in repository"))?;
+
+    // 5. Re-install (overwrites canonical + re-creates symlinks)
+    install_skill_from_path(&skill_dir, &target_agents, &agents)
+        .map_err(|e| e.to_string())?;
+
+    // Re-write provenance to preserve source label
+    crate::installer::install::write_provenance(
+        skill_id,
+        source_label,
+        Some(repo_url),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 6. Clean up temp dir if we created one
+    if let Some(temp) = temp_dir {
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    Ok(())
 }
 
 /// Find the actual source directory for a skill by id.

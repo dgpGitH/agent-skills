@@ -9,6 +9,7 @@ import {
   Info,
   Pencil,
   ArrowLeft,
+  RefreshCw,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
@@ -264,6 +265,22 @@ export default function SkillsManager() {
     }
   }
 
+  const [updating, setUpdating] = useState(false);
+
+  async function handleUpdate(skillId: string) {
+    setUpdating(true);
+    try {
+      await invoke("update_skill", { skillId });
+      await refreshAndReselect();
+      toast(t("skills.updateSuccess"));
+    } catch (e) {
+      console.error("Update failed:", e instanceof Error ? e.message : String(e));
+      toast(t("skills.updateFailed"), "destructive");
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   return (
     <div className="flex h-full">
       {/* Main list */}
@@ -380,9 +397,11 @@ export default function SkillsManager() {
             skill={selectedSkill}
             detectedAgents={detectedAgents}
             busyAgents={busyAgents}
+            updating={updating}
             onClose={closePanel}
             onEdit={() => setPanelMode("editor")}
             onSync={handleSync}
+            onUpdate={handleUpdate}
             onUninstall={handleUninstall}
           />
         )
@@ -559,17 +578,21 @@ function SkillDetail({
   skill,
   detectedAgents,
   busyAgents,
+  updating,
   onClose,
   onEdit,
   onSync,
+  onUpdate,
   onUninstall,
 }: {
   skill: Skill;
   detectedAgents: AgentConfig[];
   busyAgents: Map<string, BusyOp>;
+  updating: boolean;
   onClose: () => void;
   onEdit: () => void;
   onSync: (skillId: string, targetAgents: string[]) => void;
+  onUpdate: (skillId: string) => void;
   onUninstall: (skillId: string, agentSlug: string) => void;
 }) {
   const { t } = useTranslation();
@@ -724,6 +747,18 @@ function SkillDetail({
               <Pencil className="size-3.5" />
               {t("skills.editSkillMd")}
             </Button>
+            {sourceRepo && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-2"
+                disabled={updating}
+                onClick={() => onUpdate(skill.id)}
+              >
+                <RefreshCw className={`size-3.5 ${updating ? "animate-spin" : ""}`} />
+                {updating ? t("skills.updating") : t("skills.updateFromSource")}
+              </Button>
+            )}
             {syncTargets.length > 0 && (
               <Button
                 variant="outline"
