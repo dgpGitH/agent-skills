@@ -5,12 +5,12 @@ import {
   LayoutDashboard,
   Puzzle,
   MonitorCheck,
-  CircleOff,
   ArrowRight,
   RefreshCw,
   Copy,
   X,
 } from "lucide-react";
+import { getAgentIcon } from "@/lib/agentIcons";
 import { useAgents } from "@/hooks/useAgents";
 import { useSkills, installedAgents } from "@/hooks/useSkills";
 import LiquidGlass from "@/components/LiquidGlass";
@@ -202,17 +202,16 @@ export default function Dashboard() {
                 >
                   <div
                     className={cn(
-                      "flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-                      agent.detected
-                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                        : "bg-muted text-muted-foreground"
+                      "flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted",
+                      !agent.detected && "grayscale opacity-50"
                     )}
                   >
-                    {agent.detected ? (
-                      <MonitorCheck className="size-4" />
-                    ) : (
-                      <CircleOff className="size-4" />
-                    )}
+                    {(() => {
+                      const icon = getAgentIcon(agent.slug);
+                      return icon.type === "component"
+                        ? <icon.Component className="size-6 rounded-[3px]" aria-hidden="true" />
+                        : <img src={icon.src} alt="" className="size-6 rounded-[3px]" />;
+                    })()}
                   </div>
                   <div className="flex-1 min-w-0 relative z-[3]">
                     <span className="text-sm font-medium truncate">

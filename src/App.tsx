@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -10,11 +10,13 @@ import SkillsManager from "./pages/SkillsManager";
 import Marketplace from "./pages/Marketplace";
 import SettingsPage from "./pages/Settings";
 import { useTheme } from "./hooks/useTheme";
+import CloseConfirmDialog from "./components/CloseConfirmDialog";
 
 function AppInner() {
   const queryClient = useQueryClient();
   const { i18n } = useTranslation();
   useTheme();
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
 
   // Disable default browser/webview context menu globally
   useEffect(() => {
@@ -51,7 +53,26 @@ function AppInner() {
     };
   }, [queryClient]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen("close-requested", () => {
+      setCloseDialogOpen(true);
+    })
+      .then((cleanup) => {
+        unlisten = cleanup;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   return (
+    <>
+    <CloseConfirmDialog
+      open={closeDialogOpen}
+      onDone={() => setCloseDialogOpen(false)}
+    />
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
@@ -60,6 +81,7 @@ function AppInner() {
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
+    </>
   );
 }
 

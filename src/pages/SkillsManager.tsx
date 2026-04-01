@@ -9,8 +9,10 @@ import {
   Info,
   Pencil,
   ArrowLeft,
+  RefreshCw,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useSkills, installedAgents, allAgents, type Skill } from "@/hooks/useSkills";
@@ -264,6 +266,63 @@ export default function SkillsManager() {
     }
   }
 
+  const [updating, setUpdating] = useState(false);
+
+  async function handleUpdate(skillId: string) {
+    setUpdating(true);
+    try {
+      await invoke("update_skill", { skillId });
+      await refreshAndReselect();
+      toast(t("skills.updateSuccess"));
+    } catch (e) {
+      console.error("Update failed:", e instanceof Error ? e.message : String(e));
+      toast(t("skills.updateFailed"), "destructive");
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  // ─── Update All ───
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const [updateAllProgress, setUpdateAllProgress] = useState<{ done: number; total: number } | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ done: number; total: number; current_skill: string }>(
+      "skill-update-progress",
+      (event) => {
+        setUpdateAllProgress({ done: event.payload.done, total: event.payload.total });
+      },
+    ).then((cleanup) => { unlisten = cleanup; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  async function handleUpdateAll() {
+    setUpdatingAll(true);
+    setUpdateAllProgress(null);
+    try {
+      const result = await invoke<{ updated: string[]; failed: [string, string][]; skipped: number }>(
+        "update_all_skills",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["skills"] });
+      await refreshAndReselect();
+
+      if (result.failed.length === 0 && result.updated.length > 0) {
+        toast(t("skills.updateAllDone", { updated: result.updated.length }));
+      } else if (result.updated.length > 0) {
+        toast(t("skills.updateAllPartial", { updated: result.updated.length, failed: result.failed.length }), "destructive");
+      } else if (result.failed.length > 0) {
+        toast(t("skills.updateAllFailed"), "destructive");
+      }
+    } catch (e) {
+      console.error("Update all failed:", e instanceof Error ? e.message : String(e));
+      toast(t("skills.updateAllFailed"), "destructive");
+    } finally {
+      setUpdatingAll(false);
+      setUpdateAllProgress(null);
+    }
+  }
+
   return (
     <div className="flex h-full">
       {/* Main list */}
@@ -271,7 +330,7 @@ export default function SkillsManager() {
         className="shrink-0 overflow-y-auto p-4 space-y-3"
         style={{ width: listPane.width }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between relative z-20">
           <div className="flex items-center gap-2">
             <Puzzle className="size-4" />
             <h1 className="text-sm font-semibold">{t("skills.title")}</h1>
@@ -281,6 +340,23 @@ export default function SkillsManager() {
               </span>
             )}
           </div>
+          <Button
+            variant="ghost"
+            size={updatingAll ? "sm" : "icon-sm"}
+            className={updatingAll ? "gap-1.5 text-xs" : ""}
+            title={t("skills.updateAll")}
+            disabled={updatingAll || isLoading}
+            onClick={handleUpdateAll}
+          >
+            <RefreshCw className={`size-3.5 ${updatingAll ? "animate-spin" : ""}`} />
+            {updatingAll && (
+              <span>
+                {updateAllProgress
+                  ? t("skills.updateAllProgress", { done: updateAllProgress.done, total: updateAllProgress.total })
+                  : t("skills.updating")}
+              </span>
+            )}
+          </Button>
         </div>
 
         {/* Agent filter */}
@@ -380,9 +456,11 @@ export default function SkillsManager() {
             skill={selectedSkill}
             detectedAgents={detectedAgents}
             busyAgents={busyAgents}
+            updating={updating}
             onClose={closePanel}
             onEdit={() => setPanelMode("editor")}
             onSync={handleSync}
+            onUpdate={handleUpdate}
             onUninstall={handleUninstall}
           />
         )
@@ -559,17 +637,21 @@ function SkillDetail({
   skill,
   detectedAgents,
   busyAgents,
+  updating,
   onClose,
   onEdit,
   onSync,
+  onUpdate,
   onUninstall,
 }: {
   skill: Skill;
   detectedAgents: AgentConfig[];
   busyAgents: Map<string, BusyOp>;
+  updating: boolean;
   onClose: () => void;
   onEdit: () => void;
   onSync: (skillId: string, targetAgents: string[]) => void;
+  onUpdate: (skillId: string) => void;
   onUninstall: (skillId: string, agentSlug: string) => void;
 }) {
   const { t } = useTranslation();
@@ -724,6 +806,18 @@ function SkillDetail({
               <Pencil className="size-3.5" />
               {t("skills.editSkillMd")}
             </Button>
+            {sourceRepo && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-2"
+                disabled={updating}
+                onClick={() => onUpdate(skill.id)}
+              >
+                <RefreshCw className={`size-3.5 ${updating ? "animate-spin" : ""}`} />
+                {updating ? t("skills.updating") : t("skills.updateFromSource")}
+              </Button>
+            )}
             {syncTargets.length > 0 && (
               <Button
                 variant="outline"

@@ -1,12 +1,18 @@
 use std::path::Path;
 
-use crate::installer::install::{install_skill_from_git, install_skill_from_git_with_source, install_skill_from_path};
+use tauri::{AppHandle, Emitter};
+
+use crate::installer::install::{
+    install_skill_from_git, install_skill_from_git_with_source, install_skill_from_path,
+    read_provenance,
+};
 use crate::installer::uninstall::{
     uninstall_skill as uninstall_skill_impl,
     uninstall_skill_from_all as uninstall_skill_from_all_impl,
 };
+use crate::installer::update as updater;
 use crate::models::agent::AgentConfig;
-use crate::models::skill::{Skill, SkillSource};
+use crate::models::skill::{Skill, SkillSource, UpdateAllResult};
 use crate::paths;
 use crate::registry::loader::{detect_agents, load_agent_configs};
 use crate::scanner::engine::scan_all_skills as scan_all_skills_impl;
@@ -110,6 +116,60 @@ pub async fn sync_skill(skill_id: String, target_agents: Vec<String>) -> Result<
         // skill_id is automatically retained. If the skill was only in an agent dir
         // (not canonical) and had no provenance, there is nothing to preserve.
         Ok(())
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
+}
+
+/// Update a single skill from its upstream git repository.
+#[tauri::command]
+pub async fn update_skill(skill_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let agents = load_detected_agents()?;
+        let provenance = read_provenance();
+        let entry = provenance
+            .get(&skill_id)
+            .ok_or_else(|| format!("No provenance for skill '{skill_id}'"))?;
+
+        let source_label = entry.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let repo_url = entry
+            .get("repository")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("Skill '{skill_id}' has no repository URL"))?;
+        let skill_path = entry.get("skill_path").and_then(|v| v.as_str());
+
+        let all_skills = scan_all_skills_impl(&agents).map_err(|e| e.to_string())?;
+        let target_agents: Vec<String> = all_skills
+            .iter()
+            .find(|s| s.id == skill_id)
+            .map(|s| s.all_agents())
+            .unwrap_or_default();
+
+        let session = updater::RepoSession::open(repo_url).map_err(|e| e.to_string())?;
+        updater::update_skill(
+            &skill_id,
+            source_label,
+            repo_url,
+            skill_path,
+            &target_agents,
+            &agents,
+            &session,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
+}
+
+/// Update all skills that have an upstream git repository.
+#[tauri::command]
+pub async fn update_all_skills(app: AppHandle) -> Result<UpdateAllResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let agents = load_detected_agents()?;
+        Ok(updater::update_all(&agents, |progress| {
+            let _ = app.emit("skill-update-progress", &progress);
+        }))
     })
     .await
     .map_err(|e| format!("task failed: {e}"))?

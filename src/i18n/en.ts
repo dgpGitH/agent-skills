@@ -93,6 +93,15 @@ const en = {
     // Actions
     actions: "Actions",
     editSkillMd: "Edit SKILL.md",
+    updateFromSource: "Update from Source",
+    updating: "Updating...",
+    updateFailed: "Could not update skill from source.",
+    updateSuccess: "Skill updated successfully.",
+    updateAll: "Update All",
+    updateAllProgress: "Updating {{done}}/{{total}}...",
+    updateAllDone: "Updated {{updated}} skills.",
+    updateAllPartial: "Updated {{updated}}, failed {{failed}}.",
+    updateAllFailed: "All skill updates failed.",
     syncTo: "Sync to {{names}}",
     // Skill Content
     skillContent: "Skill Content",
@@ -216,6 +225,24 @@ const en = {
     repoSource: "Repo: {{name}}",
     localSource: "Local",
     gitSource: "Git",
+  },
+
+  // === Close Dialog ===
+  close: {
+    title: "Close Application",
+    description: "Would you like to minimize to the system tray or quit the application?",
+    minimize: "Minimize to Tray",
+    quit: "Quit",
+    remember: "Remember my choice",
+  },
+
+  // === Settings (close behavior) ===
+  settings_close: {
+    closeBehavior: "Close Behavior",
+    closeBehaviorDescription: "Choose what happens when you close the window.",
+    ask: "Ask every time",
+    minimize: "Minimize to tray",
+    quit: "Quit application",
   },
 } as const;
 

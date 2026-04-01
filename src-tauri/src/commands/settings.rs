@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoEntry {
@@ -17,6 +18,8 @@ pub struct AppSettings {
     pub language: Option<String>,
     pub path_overrides: Option<HashMap<String, Vec<String>>>,
     pub repos: Option<Vec<RepoEntry>>,
+    /// "minimize" | "quit" | None (ask every time)
+    pub close_action: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
@@ -56,4 +59,17 @@ pub fn clear_marketplace_cache() -> Result<(), String> {
         fs::remove_file(&cache_path).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn close_minimize(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_quit(app: tauri::AppHandle) {
+    app.exit(0);
 }

@@ -8,11 +8,11 @@ pub mod registry;
 pub mod scanner;
 pub mod watcher;
 
+#[cfg(target_os = "macos")]
+use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::Manager;
-#[cfg(target_os = "windows")]
-use tauri::WindowEvent;
+use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,6 +28,15 @@ pub fn run() {
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
             if let Some(tray) = app.tray_by_id("main-tray") {
+                // macOS: use monochrome template icon that adapts to menu bar theme
+                #[cfg(target_os = "macos")]
+                {
+                    let icon = Image::from_bytes(include_bytes!("../icons/tray-macos.png"));
+                    if let Ok(icon) = icon {
+                        let _ = tray.set_icon(Some(icon));
+                        let _ = tray.set_icon_as_template(true);
+                    }
+                }
                 tray.set_menu(Some(menu))?;
                 tray.set_show_menu_on_left_click(false)?;
                 tray.on_menu_event(move |app, event| match event.id().as_ref() {
@@ -68,6 +77,8 @@ pub fn run() {
             commands::skills::uninstall_skill,
             commands::skills::uninstall_skill_all,
             commands::skills::sync_skill,
+            commands::skills::update_skill,
+            commands::skills::update_all_skills,
             commands::skills::read_skill_content,
             commands::skills::write_skill_content,
             commands::skills::install_from_git,
@@ -79,6 +90,8 @@ pub fn run() {
             commands::settings::read_settings,
             commands::settings::write_settings,
             commands::settings::clear_marketplace_cache,
+            commands::settings::close_minimize,
+            commands::settings::close_quit,
             commands::repos::add_skill_repo,
             commands::repos::add_local_dir,
             commands::repos::remove_skill_repo,
@@ -87,11 +100,22 @@ pub fn run() {
             commands::repos::list_repo_skills,
             commands::repos::install_repo_skill,
         ])
-        .on_window_event(|_window, _event| {
-            #[cfg(target_os = "windows")]
-            if let WindowEvent::CloseRequested { api, .. } = _event {
-                let _ = _window.hide();
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let settings = commands::settings::read_settings().unwrap_or_default();
+                match settings.close_action.as_deref() {
+                    Some("minimize") => {
+                        let _ = window.hide();
+                    }
+                    Some("quit") => {
+                        window.app_handle().exit(0);
+                    }
+                    _ => {
+                        // No preference saved — ask the frontend
+                        let _ = window.emit("close-requested", ());
+                    }
+                }
             }
         })
         .run(tauri::generate_context!())

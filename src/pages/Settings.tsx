@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings as SettingsIcon, Trash2, Check, Globe, GitBranch, RefreshCw, Palette, Info, ExternalLink } from "lucide-react";
+import { Settings as SettingsIcon, Trash2, Check, Globe, GitBranch, RefreshCw, Palette, Info, ExternalLink, X as XIcon } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAccentColor } from "@/hooks/useAccentColor";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,12 +13,14 @@ interface AppSettings {
   theme: string | null;
   language: string | null;
   path_overrides: Record<string, string[]> | null;
+  close_action: string | null;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: null,
   language: null,
   path_overrides: null,
+  close_action: null,
 };
 
 const LANGUAGES = [
@@ -176,6 +178,39 @@ export default function SettingsPage() {
               {lang.label}
             </Button>
           ))}
+        </div>
+      </section>
+
+      {/* Close Behavior */}
+      <section className="rounded-2xl p-5 glass-panel glass-shine-always space-y-3">
+        <h2 className="text-sm font-medium flex items-center gap-1.5">
+          <XIcon className="size-4" />
+          {t("settings_close.closeBehavior")}
+        </h2>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("settings_close.closeBehaviorDescription")}
+        </p>
+        <div className="flex gap-1.5">
+          {([null, "minimize", "quit"] as const).map((option) => {
+            const current = settings?.close_action ?? null;
+            const isActive = current === option;
+            const labelKey = option === null ? "settings_close.ask" : `settings_close.${option}`;
+            return (
+              <Button
+                key={option ?? "ask"}
+                variant={isActive ? "default" : "outline"}
+                size="sm"
+                onClick={() =>
+                  saveMutation.mutate({
+                    ...(settings ?? DEFAULT_SETTINGS),
+                    close_action: option,
+                  })
+                }
+              >
+                {t(labelKey)}
+              </Button>
+            );
+          })}
         </div>
       </section>
 
