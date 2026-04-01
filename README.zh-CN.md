@@ -76,13 +76,13 @@
 Linux / macOS：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.5/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.6/install.sh | bash
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.5/install.ps1 | iex
+irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.6/install.ps1 | iex
 ```
 
 支持格式：Linux（`.deb` / `.rpm` / `.AppImage`）| macOS（`.dmg`）| Windows（`.exe` / `.msi`）
