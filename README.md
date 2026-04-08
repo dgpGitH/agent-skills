@@ -6,7 +6,7 @@
 
 <p align="center">
   A cross-platform desktop app for managing AI agent skills.<br>
-  Browse, install, sync, and edit skills across 13 agents from a single interface.
+  Browse, install, sync, and edit skills across 16 agents from a single interface.
 </p>
 
 <p align="center">
@@ -37,6 +37,9 @@
 - Trae
 - Windsurf
 - Cline
+- Factory
+- Warp
+- Qoder
 
 ## Features
 
@@ -76,13 +79,13 @@ Automatically detects your OS, architecture, and picks a matching installer from
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.7/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.8/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.7/install.ps1 | iex
+irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.8/install.ps1 | iex
 ```
 
 Supported formats: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (`.exe` / `.msi`)

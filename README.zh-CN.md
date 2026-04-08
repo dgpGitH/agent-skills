@@ -6,7 +6,7 @@
 
 <p align="center">
   跨平台桌面应用，用于管理 AI 代理技能。<br>
-  通过统一界面浏览、安装、同步和编辑 13 个代理的技能。
+  通过统一界面浏览、安装、同步和编辑 16 个代理的技能。
 </p>
 
 <p align="center">
@@ -37,6 +37,9 @@
 - Trae
 - Windsurf
 - Cline
+- Factory
+- Warp
+- Qoder
 
 ## 功能
 
@@ -76,13 +79,13 @@
 Linux / macOS：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.7/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.8/install.sh | bash
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.7/install.ps1 | iex
+irm https://raw.githubusercontent.com/chrlsio/agent-skills/v0.1.8/install.ps1 | iex
 ```
 
 支持格式：Linux（`.deb` / `.rpm` / `.AppImage`）| macOS（`.dmg`）| Windows（`.exe` / `.msi`）
