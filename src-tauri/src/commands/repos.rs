@@ -491,6 +491,9 @@ pub async fn install_repo_skill(
     skill_id: String,
     target_agents: Vec<String>,
 ) -> Result<(), String> {
+    if target_agents.iter().any(|a| a == "shared") {
+        return Err("Cannot install directly to the shared skills directory. Install to a specific agent instead.".to_string());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         install_repo_skill_sync(repo_id_param, skill_id, target_agents)
     })

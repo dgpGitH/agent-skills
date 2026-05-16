@@ -76,24 +76,34 @@ export const SkillAgentList = memo(function SkillAgentList({
         const busyOp = busyAgents.get(key);
         const actionLabel = hasLocal ? t("marketplace.sync") : t("marketplace.install");
 
+        // The "shared" virtual agent represents the canonical ~/.agents/skills/ directory.
+        // It is read-only in the UI: no install or uninstall actions are shown because
+        // it is the central repository. Users should install/uninstall from specific
+        // agents (which creates/removes symlinks into the canonical directory).
+        const isShared = agent.slug === "shared";
+
         return (
           <AgentRow
             key={agent.slug}
             name={agent.name}
-            status={status}
+            status={isShared ? "installed" : status}
             path={installation?.path}
             tags={sourceTag ? (
               <span className="text-[10px] text-muted-foreground/60 shrink-0">
                 {t("skills.via", { name: sourceTag })}
               </span>
+            ) : isShared && skill ? (
+              <span className="text-[10px] text-muted-foreground/60 shrink-0">
+                {t("skills.sharedDirectory")}
+              </span>
             ) : undefined}
-            onUninstall={!readOnly && isDirect && skill ? () => onUninstall(skill.id, agent.slug) : undefined}
-            onInstall={readOnly ? undefined : () => onInstall([agent.slug])}
+            onUninstall={!readOnly && isDirect && skill && !isShared ? () => onUninstall(skill.id, agent.slug) : undefined}
+            onInstall={readOnly || isShared ? undefined : () => onInstall([agent.slug])}
             uninstallTitle={`${t("skills.uninstall")} ${agent.name}`}
-            installLabel={actionLabel}
+            installLabel={isShared ? t("skills.available") : actionLabel}
             installTitle={`${actionLabel} → ${agent.name}`}
             revealTitle={t("skills.revealInFinder")}
-            disabled={readOnly || anyBusy}
+            disabled={readOnly || anyBusy || isShared}
             action={busyOp ? (
               <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                 <Loader2 className="size-2.5 animate-spin" />

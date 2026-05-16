@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::installer::install::{read_provenance, shared_skills_dir};
 use crate::models::agent::AgentConfig;
-use crate::installer::install::read_provenance;
 use crate::models::skill::{Skill, SkillInstallation, SkillScope, SkillSource};
 use crate::parser::skillmd::parse_skill_md_file;
 
@@ -92,10 +92,11 @@ fn is_symlink(path: &Path) -> bool {
 /// Strategy:
 /// 1. Scan each agent's own skill directories (global_paths)
 /// 2. Scan each agent's additional_readable_paths as inherited installations
-/// 3. Resolve symlinks to get canonical path
-/// 4. Merge by directory name (dedup key) — same name = same skill
-/// 5. Track per-agent installations with symlink/inherited metadata
-/// 6. Upgrade scope to SharedGlobal if installed in >1 agent
+/// 3. Always scan ~/.agents/skills/ (canonical shared directory) as a virtual "shared" agent
+/// 4. Resolve symlinks to get canonical path
+/// 5. Merge by directory name (dedup key) — same name = same skill
+/// 6. Track per-agent installations with symlink/inherited metadata
+/// 7. Upgrade scope to SharedGlobal if installed in >1 agent
 pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerError> {
     let mut dedup: HashMap<String, Skill> = HashMap::new();
     let provenance = read_provenance();
@@ -125,6 +126,28 @@ pub fn scan_all_skills(configs: &[AgentConfig]) -> Result<Vec<Skill>, ScannerErr
                 &mut dedup,
                 &provenance,
             )?;
+        }
+    }
+
+    // Pass 3: Always scan the canonical shared skills directory (~/.agents/skills/)
+    // This ensures skills are discoverable and manageable even when no AI coding agent
+    // is installed or detected on the system. Skills found here are associated with a
+    // virtual "shared" agent that is always present.
+    {
+        let shared_dir = shared_skills_dir();
+        if shared_dir.exists() || fs::create_dir_all(&shared_dir).is_ok() {
+            let shared_agent = AgentConfig {
+                slug: "shared".to_string(),
+                name: "Shared Skills".to_string(),
+                enabled: true,
+                detected: true,
+                global_paths: vec![shared_dir.to_string_lossy().to_string()],
+                ..Default::default()
+            };
+            // Only scan if the directory has entries (avoid empty scan noise)
+            if shared_dir.read_dir().map(|mut d| d.next().is_some()).unwrap_or(false) {
+                scan_skill_md_root(&shared_dir, &shared_agent, &mut dedup, &provenance)?;
+            }
         }
     }
 

@@ -61,6 +61,9 @@ pub async fn install_from_marketplace(
     skill: MarketplaceSkill,
     target_agents: Vec<String>,
 ) -> Result<(), String> {
+    if target_agents.iter().any(|a| a == "shared") {
+        return Err("Cannot install directly to the shared skills directory. Install to a specific agent instead.".to_string());
+    }
     // Offload the heavy git clone + file scan to a blocking thread
     // so the Tauri IPC channel stays responsive for UI updates
     tauri::async_runtime::spawn_blocking(move || {

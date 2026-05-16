@@ -90,6 +90,7 @@ const zhCN = {
     install: "安装",
     sync: "同步",
     uninstall: "卸载",
+    available: "可用",
     // Actions
     actions: "操作",
     editSkillMd: "编辑 SKILL.md",
