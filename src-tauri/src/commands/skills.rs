@@ -49,6 +49,9 @@ pub async fn scan_agent_skills(agent_slug: String) -> Result<Vec<Skill>, String>
 #[tauri::command]
 pub async fn install_skill(source: SkillSource, target_agents: Vec<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if target_agents.iter().any(|a| a == "shared") {
+            return Err("Cannot install directly to the shared skills directory. Install to a specific agent instead.".to_string());
+        }
         let agents = load_detected_agents()?;
         match source {
             SkillSource::LocalPath { path } => {
@@ -88,6 +91,9 @@ pub async fn install_skill(source: SkillSource, target_agents: Vec<String>) -> R
 #[tauri::command]
 pub async fn uninstall_skill(skill_id: String, agent_slug: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if agent_slug == "shared" {
+            return Err("Cannot uninstall from the shared skills directory directly. Uninstall from the specific agent instead.".to_string());
+        }
         let agents = load_detected_agents()?;
         uninstall_skill_impl(&skill_id, &agent_slug, &agents).map_err(|e| e.to_string())
     })
@@ -108,6 +114,9 @@ pub async fn uninstall_skill_all(skill_id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn sync_skill(skill_id: String, target_agents: Vec<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if target_agents.iter().any(|a| a == "shared") {
+            return Err("Cannot sync to the shared skills directory. Sync to a specific agent instead.".to_string());
+        }
         let agents = load_detected_agents()?;
         let source = resolve_skill_source(&skill_id, &agents)?;
         install_skill_from_path(&source, &target_agents, &agents).map_err(|e| e.to_string())?;
@@ -225,6 +234,9 @@ pub async fn install_from_git(
     target_agents: Vec<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if target_agents.iter().any(|a| a == "shared") {
+            return Err("Cannot install directly to the shared skills directory. Install to a specific agent instead.".to_string());
+        }
         let agents = load_detected_agents()?;
         install_skill_from_git(&repo_url, &skill_relative_path, &target_agents, &agents)
             .map_err(|e| e.to_string())?;

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::installer::install::shared_skills_dir;
 use crate::models::agent::AgentConfig;
 
 #[derive(Debug, Error)]
@@ -46,8 +47,30 @@ pub fn load_agent_configs(dir: &Path) -> Result<Vec<AgentConfig>, RegistryError>
     Ok(configs)
 }
 
+/// Return the virtual "shared" agent config that always exists.
+///
+/// This represents the canonical `~/.agents/skills/` directory and is always
+/// considered "detected", so skills in the shared directory are discoverable
+/// and manageable even when no third-party AI coding agent is installed.
+pub fn shared_agent_config() -> AgentConfig {
+    let shared_dir = shared_skills_dir();
+    AgentConfig {
+        slug: "shared".to_string(),
+        name: "Shared Skills".to_string(),
+        enabled: true,
+        detected: true,
+        global_paths: vec![shared_dir.to_string_lossy().to_string()],
+        ..Default::default()
+    }
+}
+
 pub fn detect_agents(configs: &[AgentConfig]) -> Vec<AgentConfig> {
-    configs.iter().map(detect_agent).collect()
+    let mut agents: Vec<AgentConfig> = configs.iter().map(detect_agent).collect();
+    // Always append the virtual "shared" agent so the shared skills directory
+    // is always represented in the agent list, regardless of which third-party
+    // agents are installed.
+    agents.push(shared_agent_config());
+    agents
 }
 
 fn detect_agent(config: &AgentConfig) -> AgentConfig {

@@ -90,6 +90,7 @@ const en = {
     install: "Install",
     sync: "Sync",
     uninstall: "Uninstall",
+    available: "Available",
     // Actions
     actions: "Actions",
     editSkillMd: "Edit SKILL.md",
